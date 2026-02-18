@@ -1,6 +1,3 @@
-# Smart-Water-Pipeline-System
-AI-powered Smart Water Pipeline Monitoring System with Leak Detection, Risk Analysis, and Real-time Dashboard Visualization.
-
 # Smart Water Pipeline Monitoring System
 
 An AI-powered web-based system for monitoring water pipelines, detecting leaks, analyzing corrosion risks, and providing real-time alerts through an interactive dashboard.
