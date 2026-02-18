@@ -1,16 +1,110 @@
-# React + Vite
+# Smart Water Pipeline Monitoring System
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+An AI-powered web-based system for monitoring water pipelines, detecting leaks, analyzing corrosion risks, and providing real-time alerts through an interactive dashboard.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 📌 Project Overview
 
-## React Compiler
+This system is designed to help water supply engineers and authorities monitor pipeline infrastructure efficiently.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The system:
+- Tracks pipeline details (material, diameter, zone, etc.)
+- Detects high-risk corrosion pipelines
+- Identifies leak-prone areas
+- Displays real-time alerts on a dashboard
+- Visualizes pipeline locations on a map
+- Supports AI-based leak prediction (ML model integration)
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 🎯 Objectives
+
+- Improve early leak detection
+- Reduce water loss
+- Provide clear visualization of pipeline risk levels
+- Assist engineers in maintenance decision-making
+
+---
+
+## 🛠️ Technologies Used
+
+### Frontend
+- React (Vite)
+- CSS
+- Dashboard UI Components
+
+### Backend
+- Node.js
+- Express.js
+- MongoDB
+
+### Machine Learning
+- Python
+- Google Colab
+- Scikit-learn (for model training)
+
+---
+
+## 🗂️ Project Structure
+
+smart-water-pipeline/
+│
+├── client/ # React Frontend
+├── server/ # Backend API
+├── ml/ # Machine Learning Models
+└── README.md
+
+
+---
+
+## 🚰 Core Features
+
+- 📊 Dashboard with KPI cards
+- 🗺️ Pipeline Map Visualization
+- 🚨 Leak Detection Alerts
+- 🛠️ Maintenance Tracking
+- ⚠️ Corrosion Risk Classification
+- 🤖 AI Leak Prediction Model (Planned)
+
+---
+
+## 📂 Database Fields (Example)
+
+Pipeline Data Includes:
+- pipeline_id
+- pipe_name
+- area
+- zone
+- material
+- diameter_mm
+- length_m
+- install_year
+- corrosion_risk
+- leak_count
+- last_maintenance_date
+- gps_latitude
+- gps_longitude
+
+---
+
+## 🔮 Future Improvements
+
+- IoT Sensor Integration
+- Real-time pressure monitoring
+- SMS/Email alert system
+- Advanced AI prediction model
+- Role-based authentication system
+
+---
+
+## 👨‍🎓 Academic Project
+
+Final Year Research Project  
+Focused on smart infrastructure monitoring using AI and modern web technologies.
+
+---
+
+## 📜 License
+
+This project is developed for academic purposes.
