@@ -16,6 +16,7 @@ const PIPELINES = [
     last_maintenance_date: "2025-10-12",
     gps_latitude: 6.5853,
     gps_longitude: 79.9607,
+    status: "ACTIVE",
   },
   {
     pipeline_id: "PL-1002",
@@ -31,6 +32,7 @@ const PIPELINES = [
     last_maintenance_date: "2024-12-20",
     gps_latitude: 6.6662,
     gps_longitude: 80.1646,
+    status: "UNDER_REPAIR",
   },
   {
     pipeline_id: "PL-1003",
@@ -46,6 +48,7 @@ const PIPELINES = [
     last_maintenance_date: "2025-03-04",
     gps_latitude: 6.7133,
     gps_longitude: 79.902,
+    status: "ACTIVE",
   },
 ];
 
@@ -85,7 +88,6 @@ function calcRiskScore(p) {
     if (ds > 365) score += 35;
     else if (ds > 180) score += 20;
   } else {
-    // no date → small penalty
     score += 10;
   }
 
@@ -97,7 +99,6 @@ function calcRiskScore(p) {
     else if (age > 10) score += 10;
   }
 
-  // clamp 0..100
   score = Math.max(0, Math.min(100, score));
   return score;
 }
@@ -111,6 +112,21 @@ function scoreToSeverity(score) {
 function badgeClassForSeverity(sev) {
   if (sev === "HIGH") return "danger";
   if (sev === "MEDIUM") return "warn";
+  return "ok";
+}
+
+function badgeClassForIncidentStatus(st) {
+  if (st === "NEW") return "danger";
+  if (st === "ACKNOWLEDGED" || st === "DISPATCHED") return "warn";
+  if (st === "FIX_IN_PROGRESS") return "warn";
+  if (st === "FIXED" || st === "CLOSED") return "ok";
+  return "";
+}
+
+function badgeClassForPipelineStatus(st) {
+  if (st === "UNDER_REPAIR") return "danger";
+  if (st === "UNDER_MAINTENANCE") return "warn";
+  if (st === "INACTIVE") return "";
   return "ok";
 }
 
@@ -188,6 +204,7 @@ export default function Alerts() {
 
     const pid = form.pipeline_id.trim();
     if (!pid) return setError("Select a pipeline first.");
+
     const p = pipelineMap.get(pid);
     if (!p) return setError("Invalid pipeline selected.");
 
@@ -202,6 +219,8 @@ export default function Alerts() {
       risk_score: riskScore,
       detected_at: nowISO(),
       status: "NEW",
+      // ✅ start pipeline status for this incident
+      pipeline_status: "UNDER_REPAIR",
       estimated_location: {
         lat: p.gps_latitude ?? null,
         lng: p.gps_longitude ?? null,
@@ -215,13 +234,29 @@ export default function Alerts() {
     setSelectedId(incident.incident_id);
   }
 
+  // ✅ Incident status -> pipeline status mapping (for demo)
   function updateStatus(incident_id, nextStatus) {
     setIncidents((prev) =>
-      prev.map((x) =>
-        x.incident_id === incident_id
-          ? { ...x, status: nextStatus, updated_at: nowISO() }
-          : x
-      )
+      prev.map((x) => {
+        if (x.incident_id !== incident_id) return x;
+
+        let pipeline_status = x.pipeline_status || "ACTIVE";
+
+        if (
+          nextStatus === "NEW" ||
+          nextStatus === "ACKNOWLEDGED" ||
+          nextStatus === "DISPATCHED" ||
+          nextStatus === "FIX_IN_PROGRESS"
+        ) {
+          pipeline_status = "UNDER_REPAIR";
+        }
+
+        if (nextStatus === "FIXED" || nextStatus === "CLOSED") {
+          pipeline_status = "ACTIVE";
+        }
+
+        return { ...x, status: nextStatus, pipeline_status, updated_at: nowISO() };
+      })
     );
   }
 
@@ -235,9 +270,7 @@ export default function Alerts() {
       <div className="header">
         <div>
           <div className="title">Incidents & Alerts</div>
-          <div className="subtitle">
-            Report pipeline break/leak + track repair status (No AI)
-          </div>
+          <div className="subtitle">Create incident + update repair workflow (No AI)</div>
         </div>
         <span className="badge ok">Rule-based</span>
       </div>
@@ -248,7 +281,7 @@ export default function Alerts() {
           <div>
             <div className="title" style={{ fontSize: 14 }}>Report New Incident</div>
             <div className="small">
-              Choose pipeline → type → system calculates RiskScore & Severity from dataset fields.
+              Choose pipeline → type → system calculates RiskScore & Severity from dataset.
             </div>
           </div>
           <span className="badge">{incidents.length} incidents</span>
@@ -276,7 +309,7 @@ export default function Alerts() {
               name="note"
               value={form.note}
               onChange={onChange}
-              placeholder="Optional note (e.g., burst near bridge, reported by public)"
+              placeholder="Optional note (e.g., burst near bridge)"
             />
           </div>
 
@@ -299,7 +332,7 @@ export default function Alerts() {
           <div className="card card-pad">
             <div className="title" style={{ fontSize: 14 }}>Incident List</div>
             <div className="small" style={{ marginTop: 6 }}>
-              Click an incident to see full pipeline details & update repair status.
+              Click an incident to view details and update workflow.
             </div>
 
             <div style={{ marginTop: 12 }} className="vstack">
@@ -323,7 +356,11 @@ export default function Alerts() {
                     </div>
 
                     <div className="small">
-                      Status: <b>{inc.status}</b> • Score: <b>{inc.risk_score}</b> • {new Date(inc.detected_at).toLocaleString()}
+                      Status:{" "}
+                      <span className={`badge ${badgeClassForIncidentStatus(inc.status)}`}>
+                        {inc.status}
+                      </span>{" "}
+                      • Score: <b>{inc.risk_score}</b> • {new Date(inc.detected_at).toLocaleString()}
                     </div>
                   </button>
                 ))
@@ -358,8 +395,19 @@ export default function Alerts() {
 
                 <div className="card card-pad" style={{ boxShadow: "none" }}>
                   <div className="title" style={{ fontSize: 13 }}>Repair Status</div>
+
                   <div className="small" style={{ marginTop: 6 }}>
-                    Current: <b>{selectedIncident.status}</b>
+                    Incident:{" "}
+                    <span className={`badge ${badgeClassForIncidentStatus(selectedIncident.status)}`}>
+                      {selectedIncident.status}
+                    </span>
+                  </div>
+
+                  <div className="small" style={{ marginTop: 6 }}>
+                    Pipeline Status:{" "}
+                    <span className={`badge ${badgeClassForPipelineStatus(selectedIncident.pipeline_status)}`}>
+                      {selectedIncident.pipeline_status || "—"}
+                    </span>
                   </div>
 
                   <div className="hstack" style={{ marginTop: 10, flexWrap: "wrap" }}>
@@ -393,7 +441,7 @@ export default function Alerts() {
                     </div>
 
                     <div className="small" style={{ marginTop: 10 }}>
-                      <b>System reason (No AI):</b> Score is calculated from corrosion_risk + leak_count + maintenance overdue + pipeline age.
+                      <b>System reason (No AI):</b> Score = corrosion_risk + leak_count + maintenance overdue + pipeline age.
                     </div>
                   </div>
                 ) : null}

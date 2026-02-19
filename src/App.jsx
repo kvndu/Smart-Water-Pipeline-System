@@ -4,6 +4,7 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Analytics from "./pages/Analytics.jsx";
 import Pipelines from "./pages/Pipelines.jsx";
 import Alerts from "./pages/Alerts.jsx";
+import Maintenance from "./pages/Maintenance.jsx";
 
 export default function App() {
   return (
@@ -15,6 +16,7 @@ export default function App() {
           <Route path="/pipelines" element={<Pipelines />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/maintenance" element={<Maintenance />} />
         </Route>
       </Routes>
     </BrowserRouter>
