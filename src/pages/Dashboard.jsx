@@ -3,7 +3,6 @@ import KPIGrid from "../components/KPIGrid.jsx";
 import PipelineTable from "../components/PipelineTable.jsx";
 import AlertPanel from "../components/AlertPanel.jsx";
 import PipelineMapPlaceholder from "../components/PipelineMapPlaceholder.jsx";
-import DatasetCharts from "../components/DatasetCharts.jsx";
 
 const PIPELINES = [
   {
@@ -98,16 +97,23 @@ export default function Dashboard() {
   const [risk, setRisk] = useState("All");
   const [selected, setSelected] = useState(null);
 
-  const zones = useMemo(() => ["All", ...Array.from(new Set(PIPELINES.map((p) => p.zone)))], []);
+  const zones = useMemo(
+    () => ["All", ...Array.from(new Set(PIPELINES.map((p) => p.zone)))],
+    []
+  );
   const risks = ["All", "Low", "Medium", "High"];
 
   const filtered = useMemo(() => {
     return PIPELINES.filter((p) => {
       const matchesQ =
         q.trim() === "" ||
-        `${p.pipeline_id} ${p.pipe_name} ${p.area} ${p.material}`.toLowerCase().includes(q.toLowerCase());
+        `${p.pipeline_id} ${p.pipe_name} ${p.area} ${p.material}`
+          .toLowerCase()
+          .includes(q.toLowerCase());
+
       const matchesZone = zone === "All" || p.zone === zone;
       const matchesRisk = risk === "All" || p.corrosion_risk === risk;
+
       return matchesQ && matchesZone && matchesRisk;
     });
   }, [q, zone, risk]);
@@ -117,7 +123,10 @@ export default function Dashboard() {
   const kpis = useMemo(() => {
     const total = filtered.length;
     const highRisk = filtered.filter((p) => p.corrosion_risk === "High").length;
-    const leakTotal = filtered.reduce((sum, p) => sum + (Number(p.leak_count) || 0), 0);
+    const leakTotal = filtered.reduce(
+      (sum, p) => sum + (Number(p.leak_count) || 0),
+      0
+    );
 
     return [
       { label: "Total Pipelines", value: total, hint: "From dataset" },
@@ -151,7 +160,11 @@ export default function Dashboard() {
               />
 
               <div className="hstack">
-                <select className="select" value={zone} onChange={(e) => setZone(e.target.value)}>
+                <select
+                  className="select"
+                  value={zone}
+                  onChange={(e) => setZone(e.target.value)}
+                >
                   {zones.map((z) => (
                     <option key={z} value={z}>
                       {z}
@@ -159,7 +172,11 @@ export default function Dashboard() {
                   ))}
                 </select>
 
-                <select className="select" value={risk} onChange={(e) => setRisk(e.target.value)}>
+                <select
+                  className="select"
+                  value={risk}
+                  onChange={(e) => setRisk(e.target.value)}
+                >
                   {risks.map((r) => (
                     <option key={r} value={r}>
                       {r}
@@ -176,9 +193,6 @@ export default function Dashboard() {
 
           <PipelineMapPlaceholder selected={selected} />
 
-          {/* ✅ Dataset-based charts */}
-          <DatasetCharts pipelines={filtered} />
-
           <PipelineTable
             rows={filtered}
             selectedId={selected?.pipeline_id}
@@ -190,12 +204,16 @@ export default function Dashboard() {
           <AlertPanel alerts={alerts} />
 
           <div className="card card-pad">
-            <div className="title" style={{ fontSize: 14 }}>Selected Pipeline</div>
+            <div className="title" style={{ fontSize: 14 }}>
+              Selected Pipeline
+            </div>
+
             {selected ? (
               <div style={{ marginTop: 10 }} className="vstack">
                 <div>
                   <b>{selected.pipeline_id}</b> — {selected.pipe_name}
                 </div>
+
                 <div className="small">
                   {selected.area} / {selected.zone}
                 </div>
@@ -204,7 +222,16 @@ export default function Dashboard() {
                   <span className="badge">{selected.material}</span>
                   <span className="badge">{selected.diameter_mm} mm</span>
                   <span className="badge">{selected.length_m} m</span>
-                  <span className={`badge ${selected.corrosion_risk === "High" ? "danger" : selected.corrosion_risk === "Medium" ? "warn" : "ok"}`}>
+
+                  <span
+                    className={`badge ${
+                      selected.corrosion_risk === "High"
+                        ? "danger"
+                        : selected.corrosion_risk === "Medium"
+                        ? "warn"
+                        : "ok"
+                    }`}
+                  >
                     Risk: {selected.corrosion_risk}
                   </span>
                 </div>
