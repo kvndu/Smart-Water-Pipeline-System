@@ -5,6 +5,7 @@
   --muted:#64748B;
   --border:#E6EAF0;
 
+  --primary:#2F6BFF;
   --danger:#EF4444;
   --warning:#F59E0B;
   --success:#22C55E;
@@ -21,7 +22,128 @@ body{
   font-family: Inter, system-ui, Arial, sans-serif;
 }
 
-/* ===== Layout ===== */
+/* =========================================================
+   APP SHELL (Sidebar + Main)
+========================================================= */
+.appShell{
+  display:grid;
+  grid-template-columns: 260px 1fr;
+  min-height:100vh;
+}
+
+@media (max-width: 980px){
+  .appShell{ grid-template-columns: 1fr; }
+  .sidebar{ display:none; }
+}
+
+.appMain{
+  background:var(--bg);
+}
+
+/* =========================================================
+   SIDEBAR
+========================================================= */
+.sidebar{
+  position:sticky;
+  top:0;
+  height:100vh;
+  background:#fff;
+  border-right:1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  padding:20px 16px;
+}
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:22px;
+}
+
+.brandIcon{ font-size:24px; }
+
+.brandName{
+  font-weight:900;
+  font-size:16px;
+}
+
+.brandSub{
+  font-size:12px;
+  color:var(--muted);
+}
+
+.nav{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+.navItem{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:10px 12px;
+  border-radius:12px;
+  text-decoration:none;
+  color:var(--text);
+  font-weight:800;
+  transition:0.2s;
+  border:1px solid transparent;
+}
+
+.navItem:hover{
+  background:#F1F5F9;
+  border-color: var(--border);
+}
+
+.navItem.active{
+  background:var(--primary);
+  border-color: var(--primary);
+  color:#fff;
+}
+
+.navLeft{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.navIcon{
+  width:22px;
+  text-align:center;
+  font-size:16px;
+}
+
+.navBadge{
+  background:var(--danger);
+  color:#fff;
+  font-size:11px;
+  font-weight:900;
+  padding:4px 8px;
+  border-radius:999px;
+}
+
+.sidebarFooter{
+  margin-top:auto;
+  font-size:12px;
+  color:var(--muted);
+  padding-top:12px;
+  border-top:1px solid var(--border);
+}
+
+.statusDot{
+  display:inline-block;
+  width:8px;
+  height:8px;
+  background:var(--success);
+  border-radius:50%;
+  margin:0 6px 0 4px;
+}
+
+/* =========================================================
+   PAGE LAYOUT
+========================================================= */
 .container{
   width:100%;
   min-height:100vh;
@@ -34,7 +156,7 @@ body{
 
 .header{
   display:flex;
-  align-items:center;
+  align-items:flex-start;
   justify-content:space-between;
   gap:12px;
   margin-bottom:14px;
@@ -51,26 +173,17 @@ body{
   margin-top:4px;
 }
 
-.grid{
-  display:grid;
-  grid-template-columns: 2fr 1fr;
-  gap:20px;
-}
-
-@media (max-width: 900px){
-  .grid{
-    grid-template-columns: 1fr;
-    gap:12px;
-  }
-}
-
-/* ===== Helpers ===== */
+/* =========================================================
+   HELPERS
+========================================================= */
 .hstack{ display:flex; align-items:center; gap:12px; }
 .vstack{ display:flex; flex-direction:column; gap:12px; }
 
 .small{ font-size:12px; color:var(--muted); }
 
-/* ===== Cards ===== */
+/* =========================================================
+   CARD
+========================================================= */
 .card{
   background:var(--card);
   border:1px solid var(--border);
@@ -80,7 +193,9 @@ body{
 
 .card-pad{ padding:14px; }
 
-/* ===== KPI ===== */
+/* =========================================================
+   KPI GRID
+========================================================= */
 .kpiGrid{
   display:grid;
   grid-template-columns: repeat(4, 1fr);
@@ -94,13 +209,15 @@ body{
 .kpiLabel{ color:var(--muted); font-size:12px; }
 .kpiValue{ font-size:20px; font-weight:900; margin-top:6px; }
 
-/* ===== Badges ===== */
+/* =========================================================
+   BADGES
+========================================================= */
 .badge{
   display:inline-flex;
   align-items:center;
   padding:4px 10px;
   border-radius:999px;
-  font-weight:800;
+  font-weight:900;
   font-size:12px;
   border:1px solid var(--border);
   background:#F8FAFC;
@@ -124,161 +241,40 @@ body{
   color:#991B1B;
 }
 
-/* ===== Filters ===== */
-.toolbar{
-  display:flex;
-  gap:10px;
-  flex-wrap:wrap;
-  align-items:center;
-  justify-content:space-between;
-  margin-bottom:10px;
+/* =========================================================
+   DASHBOARD CHARTS (Flow + Pressure ONLY)
+   ✅ vertical charts (one under the other)
+========================================================= */
+.chartsSection{
+  margin-top:18px;
 }
 
-.input,
-.select{
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:10px 12px;
-  background:#fff;
-  outline:none;
-}
-
-.input{ min-width:220px; }
-
-/* ===== Table ===== */
-.table{
-  width:100%;
-  border-collapse:collapse;
-  font-size:13px;
-}
-
-.table th,
-.table td{
-  padding:10px;
-  border-bottom:1px solid var(--border);
-  text-align:left;
-  vertical-align:top;
-}
-
-.table th{
-  color:var(--muted);
-  font-weight:800;
-  font-size:12px;
-}
-
-/* ===== Alerts ===== */
-.alertItem{
-  padding:10px;
-  border:1px solid var(--border);
-  border-radius:12px;
-  background:#fff;
-}
-
-.alertTop{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-}
-
-.alertTitle{
-  font-weight:900;
-  font-size:13px;
-}
-
-.alertMeta{
-  font-size:12px;
-  color:var(--muted);
-  margin-top:6px;
-}
-
-/* ===== Charts ===== */
-.chartsGrid{
+.chartsRow{
   display:grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: 1fr;   /* ✅ one chart per row */
   gap:20px;
 }
 
-@media (max-width: 1100px){
-  .chartsGrid{
-    grid-template-columns: 1fr;
-    gap:12px;
-  }
-}
-.appShell{
-  display:grid;
-  grid-template-columns: 260px 1fr;
-  min-height:100vh;
-}
-
-@media (max-width: 980px){
-  .appShell{ grid-template-columns: 1fr; }
-  .sidebar{ display:none; }
-}
-
-.appMain{
-  background: var(--bg);
-}
-
-.sidebar{
-  position: sticky;
-  top:0;
-  height:100vh;
-  background:#F1F5FF;
-  border-right:1px solid var(--border);
-  padding:18px;
-}
-
-.brand{
+.chartHeader{
   display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
   gap:12px;
-  align-items:center;
-  padding:12px;
-  border-radius:14px;
-  background:#fff;
-  border:1px solid var(--border);
-  margin-bottom:14px;
 }
 
-.brandIcon{ font-size:22px; }
-.brandName{ font-weight:900; }
-.brandSub{ font-size:12px; color:var(--muted); }
-
-.nav{
-  display:flex;
-  flex-direction:column;
-  gap:10px;
+.chartTitle{
+  font-size:14px;
+  font-weight:900;
 }
 
-.navItem{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  text-decoration:none;
-  color:var(--text);
-  padding:12px 12px;
-  border-radius:12px;
-  border:1px solid transparent;
-  font-weight:800;
+.chartBox{
+  margin-top:12px;
+  width:100%;
 }
 
-.navItem:hover{
-  background:#fff;
-  border-color: var(--border);
-}
-
-.navItem.active{
-  background:#fff;
-  border-color:#C7D2FE;
-  box-shadow:0 8px 18px rgba(15,23,42,.06);
-}
-
-.navIcon{ width:22px; text-align:center; }
-
-.sidebarFooter{
-  margin-top:auto;
-  padding-top:12px;
-}
+/* =========================================================
+   FORMS + BUTTONS (Pipelines / Maintenance / Incidents)
+========================================================= */
 .formGrid{
   display:grid;
   grid-template-columns: repeat(3, 1fr);
@@ -290,13 +286,22 @@ body{
   .formGrid{ grid-template-columns: 1fr; }
 }
 
+.input, .select{
+  width:100%;
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:10px 12px;
+  background:#fff;
+  outline:none;
+}
+
 .formError{
   padding:10px 12px;
   border:1px solid #FECACA;
   background:#FEF2F2;
   color:#991B1B;
   border-radius:12px;
-  font-weight:800;
+  font-weight:900;
   font-size:12px;
 }
 
@@ -314,49 +319,36 @@ body{
 }
 
 .btn.primary{
-  background:#2F6BFF;
-  border-color:#2F6BFF;
+  background:var(--primary);
+  border-color:var(--primary);
   color:#fff;
 }
-.formGrid{
-  display:grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap:10px;
+
+/* =========================================================
+   TABLE (Pipelines / Maintenance)
+========================================================= */
+.table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:13px;
 }
 
-@media (max-width: 1100px){
-  .formGrid{ grid-template-columns: 1fr; }
+.table th, .table td{
+  padding:10px;
+  border-bottom:1px solid var(--border);
+  text-align:left;
+  vertical-align:top;
 }
 
-.formError{
-  padding:10px 12px;
-  border:1px solid #FECACA;
-  background:#FEF2F2;
-  color:#991B1B;
-  border-radius:12px;
-  font-weight:800;
+.table th{
+  color:var(--muted);
+  font-weight:900;
   font-size:12px;
 }
 
-.btn{
-  border:1px solid var(--border);
-  background:#fff;
-  padding:10px 12px;
-  border-radius:12px;
-  font-weight:900;
-  cursor:pointer;
-}
-
-.btn:hover{
-  box-shadow:0 8px 18px rgba(15,23,42,.06);
-}
-
-.btn.primary{
-  background:#2F6BFF;
-  border-color:#2F6BFF;
-  color:#fff;
-}
-
+/* =========================================================
+   INCIDENT LIST ROW (optional)
+========================================================= */
 .incidentRow{
   width:100%;
   text-align:left;
@@ -383,93 +375,79 @@ body{
   font-weight:900;
   font-size:13px;
 }
-.sidebar{
-  width:260px;
-  background:#fff;
-  border-right:1px solid var(--border);
-  display:flex;
-  flex-direction:column;
-  padding:20px 16px;
-}
 
-.brand{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  margin-bottom:28px;
-}
-
-.brandIcon{
-  font-size:24px;
-}
-
-.brandName{
-  font-weight:900;
-  font-size:16px;
-}
-
-.brandSub{
-  font-size:12px;
-  color:var(--muted);
-}
-
-.nav{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-}
-
-.navItem{
+/* =========================================================
+   TOAST (if used)
+========================================================= */
+.toast{
+  position:fixed;
+  top:18px;
+  right:18px;
+  z-index:9999;
+  min-width:260px;
+  max-width:380px;
   display:flex;
   align-items:center;
   justify-content:space-between;
-  padding:10px 12px;
-  border-radius:10px;
-  text-decoration:none;
-  color:var(--text);
-  font-weight:600;
-  transition:0.2s;
+  gap:12px;
+  padding:12px 14px;
+  border-radius:12px;
+  border:1px solid var(--border);
+  background:#fff;
+  box-shadow:0 10px 30px rgba(15,23,42,.12);
 }
 
-.navItem:hover{
-  background:#F1F5F9;
+.toast.ok{ background:#ECFDF5; border-color:#BBF7D0; color:#065F46; }
+.toast.warn{ background:#FFFBEB; border-color:#FDE68A; color:#92400E; }
+.toast.danger{ background:#FEF2F2; border-color:#FECACA; color:#991B1B; }
+
+.toastClose{
+  border:none;
+  background:transparent;
+  cursor:pointer;
+  font-size:14px;
+  font-weight:900;
+}
+/* Next-level dashboard status strip + events */
+.statusStrip{
+  display:grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap:14px;
 }
 
-.navItem.active{
-  background:var(--primary);
-  color:#fff;
+@media (max-width: 1100px){
+  .statusStrip{ grid-template-columns: repeat(2, 1fr); }
 }
 
-.navLeft{
+.statusValue{
+  font-size:22px;
+  font-weight:900;
+  margin-top:6px;
+}
+
+.unit{
+  font-size:12px;
+  font-weight:900;
+  color:var(--muted);
+  margin-left:4px;
+}
+
+.eventList{
+  margin-top:12px;
+  padding-top:12px;
+  border-top:1px dashed var(--border);
+}
+
+.eventTitle{
+  font-size:12px;
+  font-weight:900;
+  color:var(--muted);
+  margin-bottom:8px;
+}
+
+.eventRow{
   display:flex;
   align-items:center;
   gap:10px;
-}
-
-.navIcon{
-  font-size:16px;
-}
-
-.navBadge{
-  background:var(--danger);
-  color:#fff;
-  font-size:11px;
-  font-weight:800;
-  padding:4px 8px;
-  border-radius:999px;
-}
-
-.sidebarFooter{
-  margin-top:auto;
-  font-size:12px;
-  color:var(--muted);
-}
-
-.statusDot{
-  display:inline-block;
-  width:8px;
-  height:8px;
-  background:#22C55E;
-  border-radius:50%;
-  margin:0 4px;
+  padding:8px 0;
 }

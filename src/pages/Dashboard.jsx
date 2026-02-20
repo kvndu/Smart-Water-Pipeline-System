@@ -1,254 +1,385 @@
 import { useMemo, useState } from "react";
 import KPIGrid from "../components/KPIGrid.jsx";
-import PipelineTable from "../components/PipelineTable.jsx";
-import AlertPanel from "../components/AlertPanel.jsx";
-import PipelineMapPlaceholder from "../components/PipelineMapPlaceholder.jsx";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  BarChart,
+  Bar,
+  Legend,
+  ReferenceLine,
+} from "recharts";
 
-const PIPELINES = [
-  {
-    pipeline_id: "PL-1001",
-    pipe_name: "Main Line A",
-    area: "Kalutara",
-    zone: "Z1",
-    material: "PVC",
-    diameter_mm: 120,
-    length_m: 1800,
-    install_year: 2014,
-    corrosion_risk: "Low",
-    leak_count: 0,
-    last_maintenance_date: "2025-10-12",
-    gps_latitude: 6.5853,
-    gps_longitude: 79.9607,
-  },
-  {
-    pipeline_id: "PL-1002",
-    pipe_name: "Feeder B",
-    area: "Bulathsinhala",
-    zone: "Z2",
-    material: "GI",
-    diameter_mm: 200,
-    length_m: 2450,
-    install_year: 2008,
-    corrosion_risk: "High",
-    leak_count: 3,
-    last_maintenance_date: "2024-12-20",
-    gps_latitude: 6.6662,
-    gps_longitude: 80.1646,
-  },
-  {
-    pipeline_id: "PL-1003",
-    pipe_name: "Distribution C",
-    area: "Panadura",
-    zone: "Z1",
-    material: "HDPE",
-    diameter_mm: 160,
-    length_m: 1300,
-    install_year: 2018,
-    corrosion_risk: "Medium",
-    leak_count: 1,
-    last_maintenance_date: "2025-03-04",
-    gps_latitude: 6.7133,
-    gps_longitude: 79.902,
-  },
-];
+/** ✅ Demo sensor-like series (NOT AI). Replace with IoT later. */
+function makeFlowPressureSeries() {
+  return [
+    { time: "00:00", flow: 460, pressure: 45 },
+    { time: "04:00", flow: 390, pressure: 42 },
+    { time: "08:00", flow: 620, pressure: 50 },
+    { time: "12:00", flow: 580, pressure: 48 },
+    { time: "16:00", flow: 700, pressure: 53 },
+    { time: "20:00", flow: 520, pressure: 46 },
+  ];
+}
 
-function buildAlerts(pipelines) {
-  const alerts = [];
-  pipelines.forEach((p) => {
-    const leaks = Number(p.leak_count || 0);
+function stats(values) {
+  if (!values.length) return { min: 0, max: 0, avg: 0 };
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const avg = Math.round(values.reduce((s, v) => s + v, 0) / values.length);
+  return { min, max, avg };
+}
 
-    if (leaks >= 2) {
-      alerts.push({
-        id: `AL-${p.pipeline_id}-L`,
-        title: "Leak Detected (Multiple reports)",
-        severity: "High",
-        pipeline_id: p.pipeline_id,
-        area: p.area,
-        time: "This week",
-      });
-    } else if (leaks === 1) {
-      alerts.push({
-        id: `AL-${p.pipeline_id}-L`,
-        title: "Leak Detected",
-        severity: "Medium",
-        pipeline_id: p.pipeline_id,
-        area: p.area,
-        time: "Today",
+/** ✅ Rule-based events (No AI) */
+function buildEvents(series, FLOW_MIN, FLOW_MAX, PRESS_MIN, PRESS_MAX) {
+  const events = [];
+
+  // Sudden flow drop > 150 between readings => possible leak
+  for (let i = 1; i < series.length; i++) {
+    const prev = series[i - 1];
+    const cur = series[i];
+    const drop = prev.flow - cur.flow;
+    if (drop > 150) {
+      events.push({
+        id: `E-FLOWDROP-${i}`,
+        time: cur.time,
+        type: "LEAK_SUSPECTED",
+        message: `Sudden flow drop (${drop} L/s)`,
+        level: "WARN",
       });
     }
+  }
 
-    if ((p.corrosion_risk || "").toLowerCase() === "high") {
-      alerts.push({
-        id: `AL-${p.pipeline_id}-C`,
-        title: "High Corrosion Risk (Maintenance Needed)",
-        severity: leaks > 0 ? "High" : "Medium",
-        pipeline_id: p.pipeline_id,
-        area: p.area,
-        time: "This month",
+  // Pressure above safe max => burst risk
+  for (let i = 0; i < series.length; i++) {
+    const cur = series[i];
+    if (cur.pressure > PRESS_MAX) {
+      events.push({
+        id: `E-HIGHP-${i}`,
+        time: cur.time,
+        type: "HIGH_PRESSURE",
+        message: `Pressure above safe limit (${cur.pressure} PSI)`,
+        level: "CRITICAL",
       });
     }
-  });
-  return alerts;
+  }
+
+  // Flow out of safe range (low/high)
+  for (let i = 0; i < series.length; i++) {
+    const cur = series[i];
+    if (cur.flow < FLOW_MIN) {
+      events.push({
+        id: `E-LOWFLOW-${i}`,
+        time: cur.time,
+        type: "LOW_FLOW",
+        message: `Flow below safe limit (${cur.flow} L/s)`,
+        level: "WARN",
+      });
+    }
+    if (cur.flow > FLOW_MAX) {
+      events.push({
+        id: `E-HIGHFLOW-${i}`,
+        time: cur.time,
+        type: "HIGH_FLOW",
+        message: `Flow above safe limit (${cur.flow} L/s)`,
+        level: "WARN",
+      });
+    }
+  }
+
+  // Sort by time order in series
+  const indexByTime = new Map(series.map((x, idx) => [x.time, idx]));
+  events.sort((a, b) => (indexByTime.get(a.time) ?? 0) - (indexByTime.get(b.time) ?? 0));
+
+  return events;
+}
+
+function toCSV(rows) {
+  if (!rows?.length) return "";
+  const headers = Object.keys(rows[0]);
+  return [
+    headers.join(","),
+    ...rows.map((r) => headers.map((h) => `"${String(r[h] ?? "").replaceAll('"', '""')}"`).join(",")),
+  ].join("\n");
+}
+
+function downloadCSV(filename, rows) {
+  const csv = toCSV(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+}
+
+function healthFromLatest(latest, FLOW_MIN, FLOW_MAX, PRESS_MIN, PRESS_MAX) {
+  // Critical: pressure > max
+  if (latest.pressure > PRESS_MAX) return { label: "CRITICAL", badge: "danger" };
+
+  // Warning: flow out of range OR near limits
+  if (latest.flow < FLOW_MIN || latest.flow > FLOW_MAX) return { label: "WARNING", badge: "warn" };
+  if (latest.pressure < PRESS_MIN || latest.pressure > PRESS_MAX - 1) return { label: "WARNING", badge: "warn" };
+
+  return { label: "OK", badge: "ok" };
 }
 
 export default function Dashboard() {
-  const [q, setQ] = useState("");
-  const [zone, setZone] = useState("All");
-  const [risk, setRisk] = useState("All");
-  const [selected, setSelected] = useState(null);
+  // Safe ranges (tweak if needed)
+  const FLOW_MIN = 400;
+  const FLOW_MAX = 750;
+  const PRESS_MIN = 40;
+  const PRESS_MAX = 55;
 
-  const zones = useMemo(
-    () => ["All", ...Array.from(new Set(PIPELINES.map((p) => p.zone)))],
-    []
+  const [range] = useState("Today"); // can expand later: Today / 7 Days
+  const series = useMemo(() => makeFlowPressureSeries(), []);
+
+  const flowValues = useMemo(() => series.map((x) => x.flow), [series]);
+  const pressValues = useMemo(() => series.map((x) => x.pressure), [series]);
+
+  const flowS = useMemo(() => stats(flowValues), [flowValues]);
+  const pressS = useMemo(() => stats(pressValues), [pressValues]);
+
+  const latest = series[series.length - 1] || { time: "--:--", flow: 0, pressure: 0 };
+  const health = useMemo(
+    () => healthFromLatest(latest, FLOW_MIN, FLOW_MAX, PRESS_MIN, PRESS_MAX),
+    [latest, FLOW_MIN, FLOW_MAX, PRESS_MIN, PRESS_MAX]
   );
-  const risks = ["All", "Low", "Medium", "High"];
 
-  const filtered = useMemo(() => {
-    return PIPELINES.filter((p) => {
-      const matchesQ =
-        q.trim() === "" ||
-        `${p.pipeline_id} ${p.pipe_name} ${p.area} ${p.material}`
-          .toLowerCase()
-          .includes(q.toLowerCase());
+  const events = useMemo(
+    () => buildEvents(series, FLOW_MIN, FLOW_MAX, PRESS_MIN, PRESS_MAX),
+    [series, FLOW_MIN, FLOW_MAX, PRESS_MIN, PRESS_MAX]
+  );
 
-      const matchesZone = zone === "All" || p.zone === zone;
-      const matchesRisk = risk === "All" || p.corrosion_risk === risk;
-
-      return matchesQ && matchesZone && matchesRisk;
-    });
-  }, [q, zone, risk]);
-
-  const alerts = useMemo(() => buildAlerts(filtered), [filtered]);
+  const criticalCount = useMemo(() => events.filter((e) => e.level === "CRITICAL").length, [events]);
+  const warnCount = useMemo(() => events.filter((e) => e.level === "WARN").length, [events]);
 
   const kpis = useMemo(() => {
-    const total = filtered.length;
-    const highRisk = filtered.filter((p) => p.corrosion_risk === "High").length;
-    const leakTotal = filtered.reduce(
-      (sum, p) => sum + (Number(p.leak_count) || 0),
-      0
-    );
-
     return [
-      { label: "Total Pipelines", value: total, hint: "From dataset" },
-      { label: "High Corrosion Risk", value: highRisk, hint: "corrosion_risk = High" },
-      { label: "Total Leak Reports", value: leakTotal, hint: "sum(leak_count)" },
-      { label: "Active Alerts", value: alerts.length, hint: "rule-based" },
+      { label: "Avg Flow Rate", value: `${flowS.avg} L/s`, hint: "Average for selected range" },
+      { label: "Avg Pressure", value: `${pressS.avg} PSI`, hint: "Average for selected range" },
+      { label: "Warnings", value: warnCount, hint: "Rule-based flags" },
+      { label: "Critical", value: criticalCount, hint: "Immediate attention" },
     ];
-  }, [filtered, alerts]);
+  }, [flowS.avg, pressS.avg, warnCount, criticalCount]);
+
+  const insightText = useMemo(() => {
+    const lines = [];
+    // Flow insight
+    if (latest.flow < FLOW_MIN) lines.push("Flow is LOW → possible leak / low supply / valve closing.");
+    else if (latest.flow > FLOW_MAX) lines.push("Flow is HIGH → possible burst / abnormal demand.");
+    else lines.push("Flow is within safe range.");
+
+    // Pressure insight
+    if (latest.pressure > PRESS_MAX) lines.push("Pressure is HIGH → burst risk / blockage likely.");
+    else if (latest.pressure < PRESS_MIN) lines.push("Pressure is LOW → supply issue / pump problem.");
+    else lines.push("Pressure is within safe range.");
+
+    // Events summary
+    if (events.length > 0) {
+      const top = events.slice(-3).map((e) => `${e.time}: ${e.type}`).join(" • ");
+      lines.push(`Recent flags: ${top}`);
+    } else {
+      lines.push("No anomalies detected in the selected range.");
+    }
+
+    return lines;
+  }, [latest.flow, latest.pressure, events, FLOW_MIN, FLOW_MAX, PRESS_MIN, PRESS_MAX]);
 
   return (
     <div className="container">
+      {/* Header */}
       <div className="header">
         <div>
           <div className="title">Smart Water Pipeline Dashboard</div>
-          <div className="subtitle">Dataset-based analytics (No AI / No ML)</div>
+          <div className="subtitle">
+            Live monitoring (demo sensor stream) • Rule-based interpretation • No AI/ML
+          </div>
         </div>
-        <span className="badge ok">Status: Running</span>
+
+        <div className="hstack" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <span className={`badge ${health.badge}`}>System Health: {health.label}</span>
+          <button className="btn" onClick={() => downloadCSV("sensor_readings.csv", series)} type="button">
+            Download CSV
+          </button>
+        </div>
       </div>
 
-      <KPIGrid kpis={kpis} />
-
-      <div className="grid" style={{ marginTop: 12 }}>
-        <div className="vstack">
-          <div className="card card-pad">
-            <div className="toolbar">
-              <input
-                className="input"
-                placeholder="Search pipeline / area / material..."
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
-
-              <div className="hstack">
-                <select
-                  className="select"
-                  value={zone}
-                  onChange={(e) => setZone(e.target.value)}
-                >
-                  {zones.map((z) => (
-                    <option key={z} value={z}>
-                      {z}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  className="select"
-                  value={risk}
-                  onChange={(e) => setRisk(e.target.value)}
-                >
-                  {risks.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
+      {/* Status Strip (Meaning first) */}
+      <div className="card card-pad">
+        <div className="statusStrip">
+          <div>
+            <div className="small">Now Flow</div>
+            <div className="statusValue">{latest.flow} <span className="unit">L/s</span></div>
             <div className="small">
-              All charts + KPIs are calculated directly from dataset fields (no prediction).
+              Safe: <b>{FLOW_MIN}–{FLOW_MAX}</b>
             </div>
           </div>
 
-          <PipelineMapPlaceholder selected={selected} />
+          <div>
+            <div className="small">Now Pressure</div>
+            <div className="statusValue">{latest.pressure} <span className="unit">PSI</span></div>
+            <div className="small">
+              Safe: <b>{PRESS_MIN}–{PRESS_MAX}</b>
+            </div>
+          </div>
 
-          <PipelineTable
-            rows={filtered}
-            selectedId={selected?.pipeline_id}
-            onSelect={(p) => setSelected(p)}
-          />
+          <div>
+            <div className="small">Last Updated</div>
+            <div className="statusValue">{latest.time}</div>
+            <div className="small">Range: <b>{range}</b></div>
+          </div>
+
+          <div>
+            <div className="small">Flags</div>
+            <div className="statusValue">
+              <span className="badge warn">Warn {warnCount}</span>{" "}
+              <span className="badge danger">Critical {criticalCount}</span>
+            </div>
+            <div className="small">Threshold rules</div>
+          </div>
         </div>
+      </div>
 
+      {/* KPI Cards */}
+      <div style={{ marginTop: 12 }}>
+        <KPIGrid kpis={kpis} />
+      </div>
+
+      {/* Charts (Vertical) */}
+      <div className="chartsSection">
         <div className="vstack">
-          <AlertPanel alerts={alerts} />
-
+          {/* Flow Chart */}
           <div className="card card-pad">
-            <div className="title" style={{ fontSize: 14 }}>
-              Selected Pipeline
+            <div className="chartHeader">
+              <div>
+                <div className="chartTitle">Flow Rate (L/s)</div>
+                <div className="small">
+                  Meaning: sudden drop → <b>possible leak</b>. Safe band shown by reference lines.
+                </div>
+              </div>
+
+              <div className="hstack" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <span className="badge">Min {flowS.min}</span>
+                <span className="badge">Avg {flowS.avg}</span>
+                <span className="badge">Max {flowS.max}</span>
+              </div>
             </div>
 
-            {selected ? (
-              <div style={{ marginTop: 10 }} className="vstack">
-                <div>
-                  <b>{selected.pipeline_id}</b> — {selected.pipe_name}
-                </div>
+            <div className="chartBox">
+              <ResponsiveContainer width="100%" height={360}>
+                <LineChart data={series}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="time" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <ReferenceLine y={FLOW_MIN} strokeDasharray="4 4" />
+                  <ReferenceLine y={FLOW_MAX} strokeDasharray="4 4" />
 
+                  <Line type="monotone" dataKey="flow" strokeWidth={3} dot />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Flow Events */}
+            <div className="eventList">
+              <div className="eventTitle">Detected Events</div>
+              {events.filter((e) => e.type.includes("FLOW") || e.type.includes("LEAK")).length === 0 ? (
+                <div className="small">No flow-related events.</div>
+              ) : (
+                events
+                  .filter((e) => e.type.includes("FLOW") || e.type.includes("LEAK"))
+                  .slice(-4)
+                  .map((e) => (
+                    <div key={e.id} className="eventRow">
+                      <span className={`badge ${e.level === "CRITICAL" ? "danger" : "warn"}`}>
+                        {e.type}
+                      </span>
+                      <div className="small">
+                        <b>{e.time}</b> • {e.message}
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+
+          {/* Pressure Chart */}
+          <div className="card card-pad">
+            <div className="chartHeader">
+              <div>
+                <div className="chartTitle">Pressure (PSI)</div>
                 <div className="small">
-                  {selected.area} / {selected.zone}
-                </div>
-
-                <div className="hstack" style={{ flexWrap: "wrap" }}>
-                  <span className="badge">{selected.material}</span>
-                  <span className="badge">{selected.diameter_mm} mm</span>
-                  <span className="badge">{selected.length_m} m</span>
-
-                  <span
-                    className={`badge ${
-                      selected.corrosion_risk === "High"
-                        ? "danger"
-                        : selected.corrosion_risk === "Medium"
-                        ? "warn"
-                        : "ok"
-                    }`}
-                  >
-                    Risk: {selected.corrosion_risk}
-                  </span>
-                </div>
-
-                <div className="small">
-                  Last maintenance: <b>{selected.last_maintenance_date}</b>
-                  <br />
-                  GPS: {selected.gps_latitude}, {selected.gps_longitude}
-                  <br />
-                  Leak reports: <b>{selected.leak_count}</b>
+                  Meaning: high pressure → <b>burst risk</b>. Safe band shown by reference lines.
                 </div>
               </div>
-            ) : (
-              <div className="small" style={{ marginTop: 10 }}>
-                Click “View” on a pipeline row to see details here.
+
+              <div className="hstack" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <span className="badge">Min {pressS.min}</span>
+                <span className="badge">Avg {pressS.avg}</span>
+                <span className="badge">Max {pressS.max}</span>
               </div>
-            )}
+            </div>
+
+            <div className="chartBox">
+              <ResponsiveContainer width="100%" height={360}>
+                <BarChart data={series}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="time" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <ReferenceLine y={PRESS_MIN} strokeDasharray="4 4" />
+                  <ReferenceLine y={PRESS_MAX} strokeDasharray="4 4" />
+                  <Bar dataKey="pressure" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Pressure Events */}
+            <div className="eventList">
+              <div className="eventTitle">Detected Events</div>
+              {events.filter((e) => e.type.includes("PRESSURE")).length === 0 ? (
+                <div className="small">No pressure-related events.</div>
+              ) : (
+                events
+                  .filter((e) => e.type.includes("PRESSURE"))
+                  .slice(-4)
+                  .map((e) => (
+                    <div key={e.id} className="eventRow">
+                      <span className={`badge ${e.level === "CRITICAL" ? "danger" : "warn"}`}>
+                        {e.type}
+                      </span>
+                      <div className="small">
+                        <b>{e.time}</b> • {e.message}
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
+
+          {/* Insights box */}
+          <div className="card card-pad">
+            <div className="title" style={{ fontSize: 14 }}>Quick Insights (What this means)</div>
+            <div className="vstack" style={{ marginTop: 10 }}>
+              {insightText.map((t, idx) => (
+                <div key={idx} className="small">• {t}</div>
+              ))}
+            </div>
+          </div>
+
+          {/* Examiner Note */}
+          <div className="card card-pad">
+            <div className="title" style={{ fontSize: 14 }}>Examiner Note</div>
+            <div className="small" style={{ marginTop: 6 }}>
+              “Dashboard provides monitoring + interpretation using fixed safe ranges and rule-based flags. 
+              CSV download provides evidence/history for reports. No AI/ML predictions are used.”
+            </div>
           </div>
         </div>
       </div>
