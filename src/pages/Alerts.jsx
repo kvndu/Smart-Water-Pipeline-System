@@ -266,31 +266,40 @@ export default function Alerts() {
   }
 
   return (
-    <div className="container">
-      <div className="header">
+    <div className="container" style={{ animation: "fadeIn 0.5s ease-out" }}>
+      {/* Header */}
+      <div className="header" style={{ marginBottom: "28px", borderBottom: "1px solid #e2e8f0", paddingBottom: "16px" }}>
         <div>
-          <div className="title">Incidents & Alerts</div>
-          <div className="subtitle">Create incident + update repair workflow (No AI)</div>
+          <div className="title" style={{ fontSize: "28px", color: "var(--text)", fontWeight: 900, marginBottom: "4px" }}>
+            Incidents & Alerts
+          </div>
+          <div className="subtitle" style={{ fontSize: "15px", color: "var(--muted)" }}>
+            Create and track critical incidents across the pipeline network.
+          </div>
         </div>
-        <span className="badge ok">Rule-based</span>
+        <div className="hstack">
+          <span className="badge" style={{ fontSize: "12px", padding: "6px 12px", background: "#fef3c7", color: "#d97706", border: "1px solid #fde68a" }}>
+            🛡️ Rule-based Engine
+          </span>
+        </div>
       </div>
 
       {/* Create Incident */}
-      <div className="card card-pad">
-        <div className="hstack" style={{ justifyContent: "space-between" }}>
+      <div className="card card-pad" style={{ background: "linear-gradient(to right, #ffffff, #f8fafc)", border: "1px solid #e2e8f0", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.05)" }}>
+        <div className="hstack" style={{ justifyContent: "space-between", borderBottom: "1px dashed #cbd5e1", paddingBottom: "12px", marginBottom: "16px" }}>
           <div>
-            <div className="title" style={{ fontSize: 14 }}>Report New Incident</div>
-            <div className="small">
-              Choose pipeline → type → system calculates RiskScore & Severity from dataset.
+            <div className="title" style={{ fontSize: "16px", color: "var(--text)" }}>📝 Report New Incident</div>
+            <div className="small" style={{ color: "var(--muted)" }}>
+              Choose a pipeline and incident type. System automatically calculates threat Severity & RiskScore.
             </div>
           </div>
-          <span className="badge">{incidents.length} incidents</span>
+          <span className="badge" style={{ background: "#e2e8f0", color: "#334155", fontSize: "13px", fontWeight: 800 }}>{incidents.length} Records</span>
         </div>
 
-        <form onSubmit={createIncident} style={{ marginTop: 12 }}>
-          <div className="formGrid">
-            <select className="select" name="pipeline_id" value={form.pipeline_id} onChange={onChange}>
-              <option value="">Select Pipeline</option>
+        <form onSubmit={createIncident}>
+          <div className="formGrid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: "16px" }}>
+            <select className="select" name="pipeline_id" value={form.pipeline_id} onChange={onChange} style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", fontWeight: 600 }}>
+              <option value="">-- Select Asset --</option>
               {PIPELINES.map((p) => (
                 <option key={p.pipeline_id} value={p.pipeline_id}>
                   {p.pipeline_id} — {p.pipe_name}
@@ -298,7 +307,7 @@ export default function Alerts() {
               ))}
             </select>
 
-            <select className="select" name="type" value={form.type} onChange={onChange}>
+            <select className="select" name="type" value={form.type} onChange={onChange} style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", fontWeight: 600 }}>
               {INCIDENT_TYPES.map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
@@ -309,58 +318,73 @@ export default function Alerts() {
               name="note"
               value={form.note}
               onChange={onChange}
-              placeholder="Optional note (e.g., burst near bridge)"
+              placeholder="Optional operational note (e.g., burst near bridge)"
+              style={{ width: "100%", padding: "12px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff" }}
             />
           </div>
 
-          {error ? <div className="formError" style={{ marginTop: 10 }}>{error}</div> : null}
+          {error ? <div style={{ marginTop: "12px", padding: "10px", background: "#fef2f2", color: "#dc2626", borderRadius: "8px", fontSize: "13px", fontWeight: 700, border: "1px solid #fecaca" }}>{error}</div> : null}
 
-          <div className="hstack" style={{ marginTop: 12, justifyContent: "flex-end" }}>
-            <button className="btn" type="button" onClick={() => { setForm(emptyForm); setError(""); }}>
-              Clear
+          <div className="hstack" style={{ marginTop: "20px", justifyContent: "flex-end", gap: "12px" }}>
+            <button className="btn" type="button" onClick={() => { setForm(emptyForm); setError(""); }} style={{ background: "#f1f5f9", border: "none", color: "#475569", fontWeight: 700, padding: "8px 16px" }}>
+              Clear form
             </button>
-            <button className="btn primary" type="submit">
-              Create Incident
+            <button className="btn primary" type="submit" style={{ display: "flex", alignItems: "center", gap: "6px", background: "var(--primary)", color: "#fff", padding: "8px 20px" }}>
+              <span style={{ fontSize: "14px" }}>+</span> Dispatch Alert
             </button>
           </div>
         </form>
       </div>
 
-      <div className="grid" style={{ marginTop: 12 }}>
+      <div className="grid" style={{ marginTop: 24, display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: "24px" }}>
         {/* Left: incident list */}
-        <div className="vstack">
-          <div className="card card-pad">
-            <div className="title" style={{ fontSize: 14 }}>Incident List</div>
-            <div className="small" style={{ marginTop: 6 }}>
-              Click an incident to view details and update workflow.
+        <div className="vstack" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div className="card card-pad" style={{ background: "#fff", border: "1px solid #e2e8f0", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.02)" }}>
+            <div style={{ marginBottom: "16px", borderBottom: "1px dashed #e2e8f0", paddingBottom: "12px" }}>
+              <div className="title" style={{ fontSize: "16px", color: "var(--text)" }}>📋 Incident Log</div>
+              <div className="small" style={{ color: "var(--muted)", marginTop: "4px" }}>
+                Select a logged incident to manage workflow.
+              </div>
             </div>
 
-            <div style={{ marginTop: 12 }} className="vstack">
+            <div className="vstack" style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "500px", overflowY: "auto", paddingRight: "4px" }}>
               {sortedIncidents.length === 0 ? (
-                <div className="small">No incidents yet. Create one above.</div>
+                <div style={{ padding: "30px", textAlign: "center", background: "#f8fafc", borderRadius: "8px", border: "1px dashed #cbd5e1", color: "#64748b", fontWeight: 600 }}>
+                  No incidents reported. System clear.
+                </div>
               ) : (
                 sortedIncidents.map((inc) => (
                   <button
                     key={inc.incident_id}
-                    className="incidentRow"
                     onClick={() => setSelectedId(inc.incident_id)}
                     type="button"
+                    style={{
+                      display: "flex", flexDirection: "column", gap: "8px", padding: "14px",
+                      background: selectedId === inc.incident_id ? "#f1f5f9" : "#fff",
+                      border: selectedId === inc.incident_id ? "2px solid #3b82f6" : "1px solid #e2e8f0",
+                      borderRadius: "10px", cursor: "pointer", transition: "all 0.2s",
+                      textAlign: "left"
+                    }}
                   >
-                    <div className="incidentRowTop">
-                      <div className="incidentTitle">
-                        {inc.type} — {inc.pipeline_id}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                      <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text)" }}>
+                        {inc.type} <span style={{ color: "var(--muted)", fontWeight: 600 }}>/ {inc.pipeline_id}</span>
                       </div>
-                      <span className={`badge ${badgeClassForSeverity(inc.severity)}`}>
-                        {inc.severity}
+                      <span className={`badge ${badgeClassForSeverity(inc.severity)}`} style={{ fontSize: "11px", padding: "4px 8px" }}>
+                        Severity: {inc.severity}
                       </span>
                     </div>
 
-                    <div className="small">
-                      Status:{" "}
-                      <span className={`badge ${badgeClassForIncidentStatus(inc.status)}`}>
-                        {inc.status}
-                      </span>{" "}
-                      • Score: <b>{inc.risk_score}</b> • {new Date(inc.detected_at).toLocaleString()}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                        <span style={{ fontSize: "12px", color: "#64748b" }}>Status:</span>
+                        <span className={`badge ${badgeClassForIncidentStatus(inc.status)}`} style={{ fontSize: "10px" }}>
+                          {inc.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "12px", color: "#64748b", fontWeight: 600 }}>
+                        Score: <span style={{ color: "var(--text)", fontWeight: 800 }}>{inc.risk_score}</span>
+                      </div>
                     </div>
                   </button>
                 ))
@@ -370,52 +394,71 @@ export default function Alerts() {
         </div>
 
         {/* Right: details */}
-        <div className="vstack">
-          <div className="card card-pad">
-            <div className="title" style={{ fontSize: 14 }}>Incident Details</div>
+        <div className="vstack" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+          <div className="card card-pad" style={{ background: "linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)", border: "1px solid #e2e8f0", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.05)" }}>
+            <div style={{ marginBottom: "16px", borderBottom: "1px dashed #e2e8f0", paddingBottom: "12px" }}>
+              <div className="title" style={{ fontSize: "16px", color: "var(--text)" }}>🔍 Response Toolkit</div>
+            </div>
 
             {!selectedIncident ? (
-              <div className="small" style={{ marginTop: 10 }}>
-                Select an incident from the list to view details.
+              <div style={{ padding: "40px 20px", textAlign: "center", background: "#f8fafc", borderRadius: "12px", border: "1px dashed #cbd5e1", color: "#64748b" }}>
+                <div style={{ fontSize: "32px", marginBottom: "12px" }}>🖱️</div>
+                <div style={{ fontWeight: 800, fontSize: "16px", marginBottom: "4px", color: "var(--text)" }}>Awaiting Selection</div>
+                <div style={{ fontSize: "13px" }}>Choose an incident from the log to view details and deploy response teams.</div>
               </div>
             ) : (
-              <div className="vstack" style={{ marginTop: 10 }}>
-                <div className="hstack" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div>
-                    <div><b>{selectedIncident.type}</b> — {selectedIncident.pipeline_id}</div>
-                    <div className="small">
-                      Detected: {new Date(selectedIncident.detected_at).toLocaleString()}
+              <div className="vstack" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+
+                {/* Header card */}
+                <div style={{ padding: "16px", background: selectedIncident.severity === "HIGH" ? "#fef2f2" : "#f8fafc", borderRadius: "12px", border: selectedIncident.severity === "HIGH" ? "1px solid #fecaca" : "1px solid #e2e8f0" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: "20px", fontWeight: 900, color: "var(--text)" }}>{selectedIncident.type} <span style={{ color: "var(--muted)" }}>@ {selectedIncident.pipeline_id}</span></div>
+                      <div style={{ fontSize: "13px", color: "var(--muted)", marginTop: "6px" }}>
+                        Detected: <b style={{ color: "var(--text)" }}>{new Date(selectedIncident.detected_at).toLocaleString()}</b>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <span className={`badge ${badgeClassForSeverity(selectedIncident.severity)}`} style={{ fontSize: "12px", padding: "6px 10px" }}>
+                        {selectedIncident.severity} IMPACT
+                      </span>
+                      <div style={{ fontSize: "12px", color: "var(--muted)", marginTop: "6px", fontWeight: 800 }}>Risk Score {selectedIncident.risk_score}/100</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Workflow Controls */}
+                <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px" }}>
+                  <div style={{ fontSize: "14px", fontWeight: 800, marginBottom: "12px", color: "var(--text)" }}>🛠️ Repair Workflow</div>
+
+                  <div style={{ display: "flex", gap: "24px", marginBottom: "16px" }}>
+                    <div>
+                      <div style={{ fontSize: "12px", color: "#64748b", fontWeight: 700, marginBottom: "4px" }}>Incident State</div>
+                      <span className={`badge ${badgeClassForIncidentStatus(selectedIncident.status)}`} style={{ fontSize: "13px", padding: "6px 12px" }}>
+                        {selectedIncident.status}
+                      </span>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: "12px", color: "#64748b", fontWeight: 700, marginBottom: "4px" }}>Asset State</div>
+                      <span className={`badge ${badgeClassForPipelineStatus(selectedIncident.pipeline_status)}`} style={{ fontSize: "13px", padding: "6px 12px" }}>
+                        {selectedIncident.pipeline_status || "—"}
+                      </span>
                     </div>
                   </div>
 
-                  <span className={`badge ${badgeClassForSeverity(selectedIncident.severity)}`}>
-                    {selectedIncident.severity} (Score {selectedIncident.risk_score})
-                  </span>
-                </div>
-
-                <div className="card card-pad" style={{ boxShadow: "none" }}>
-                  <div className="title" style={{ fontSize: 13 }}>Repair Status</div>
-
-                  <div className="small" style={{ marginTop: 6 }}>
-                    Incident:{" "}
-                    <span className={`badge ${badgeClassForIncidentStatus(selectedIncident.status)}`}>
-                      {selectedIncident.status}
-                    </span>
-                  </div>
-
-                  <div className="small" style={{ marginTop: 6 }}>
-                    Pipeline Status:{" "}
-                    <span className={`badge ${badgeClassForPipelineStatus(selectedIncident.pipeline_status)}`}>
-                      {selectedIncident.pipeline_status || "—"}
-                    </span>
-                  </div>
-
-                  <div className="hstack" style={{ marginTop: 10, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                     {INCIDENT_STATUSES.map((s) => (
                       <button
                         key={s}
                         type="button"
-                        className={`btn ${selectedIncident.status === s ? "primary" : ""}`}
+                        style={{
+                          padding: "8px 12px", borderRadius: "8px", fontSize: "12px", fontWeight: selectedIncident.status === s ? 800 : 700,
+                          cursor: "pointer", transition: "all 0.2s",
+                          background: selectedIncident.status === s ? "var(--primary)" : "#f1f5f9",
+                          color: selectedIncident.status === s ? "#fff" : "#475569",
+                          border: "none",
+                          boxShadow: selectedIncident.status === s ? "0 4px 6px -1px rgba(59,130,246,0.3)" : "none"
+                        }}
                         onClick={() => updateStatus(selectedIncident.incident_id, s)}
                       >
                         {s}
@@ -424,58 +467,70 @@ export default function Alerts() {
                   </div>
                 </div>
 
+                {/* DB Details */}
                 {selectedPipeline ? (
-                  <div className="card card-pad" style={{ boxShadow: "none" }}>
-                    <div className="title" style={{ fontSize: 13 }}>Pipeline Details (from dataset)</div>
+                  <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px" }}>
+                    <div style={{ fontSize: "14px", fontWeight: 800, marginBottom: "12px", color: "var(--text)" }}>⚙️ Underlying Asset Schema</div>
 
-                    <div className="small" style={{ marginTop: 8 }}>
-                      <b>{selectedPipeline.pipeline_id}</b> — {selectedPipeline.pipe_name}<br />
-                      Area/Zone: <b>{selectedPipeline.area}</b> / <b>{selectedPipeline.zone}</b><br />
-                      Material: <b>{selectedPipeline.material}</b><br />
-                      Diameter: <b>{selectedPipeline.diameter_mm} mm</b> • Length: <b>{selectedPipeline.length_m} m</b><br />
-                      Install Year: <b>{selectedPipeline.install_year}</b><br />
-                      Corrosion Risk: <b>{selectedPipeline.corrosion_risk}</b><br />
-                      Leak Reports: <b>{selectedPipeline.leak_count}</b><br />
-                      Last Maintenance: <b>{selectedPipeline.last_maintenance_date || "—"}</b><br />
-                      GPS: <b>{selectedPipeline.gps_latitude}</b>, <b>{selectedPipeline.gps_longitude}</b>
-                    </div>
-
-                    <div className="small" style={{ marginTop: 10 }}>
-                      <b>System reason (No AI):</b> Score = corrosion_risk + leak_count + maintenance overdue + pipeline age.
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", fontSize: "13px", background: "#f8fafc", padding: "12px", borderRadius: "8px" }}>
+                      <div><span style={{ color: "#64748b" }}>ID:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.pipeline_id}</b></div>
+                      <div><span style={{ color: "#64748b" }}>Name:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.pipe_name}</b></div>
+                      <div><span style={{ color: "#64748b" }}>Zone:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.area} / {selectedPipeline.zone}</b></div>
+                      <div><span style={{ color: "#64748b" }}>Material:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.material}</b></div>
+                      <div><span style={{ color: "#64748b" }}>Spec:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.diameter_mm}mm x {selectedPipeline.length_m}m</b></div>
+                      <div><span style={{ color: "#64748b" }}>Vintage:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.install_year}</b></div>
+                      <div><span style={{ color: "#64748b" }}>GPS:</span> <b style={{ color: "var(--text)", fontFamily: "monospace" }}>{selectedPipeline.gps_latitude}, {selectedPipeline.gps_longitude}</b></div>
+                      <div><span style={{ color: "#64748b" }}>Corrosion:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.corrosion_risk}</b></div>
+                      <div><span style={{ color: "#64748b" }}>Leak Hist:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.leak_count}</b></div>
+                      <div><span style={{ color: "#64748b" }}>Last Ops:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.last_maintenance_date || "N/A"}</b></div>
                     </div>
                   </div>
                 ) : null}
 
+                {/* Notes */}
                 {selectedIncident.note ? (
-                  <div className="card card-pad" style={{ boxShadow: "none" }}>
-                    <div className="title" style={{ fontSize: 13 }}>Notes</div>
-                    <div className="small" style={{ marginTop: 6 }}>{selectedIncident.note}</div>
+                  <div style={{ background: "#fefce8", border: "1px solid #fef08a", borderRadius: "12px", padding: "16px" }}>
+                    <div style={{ fontSize: "14px", fontWeight: 800, marginBottom: "4px", color: "#854d0e" }}>📒 Dispatcher Notes</div>
+                    <div style={{ fontSize: "13px", color: "#713f12", fontStyle: "italic" }}>"{selectedIncident.note}"</div>
                   </div>
                 ) : null}
 
-                <div className="hstack" style={{ justifyContent: "flex-end" }}>
+                {/* Delete Button */}
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "8px" }}>
                   <button
                     type="button"
-                    className="btn"
+                    style={{ background: "#fff", border: "1px solid #fecaca", color: "#dc2626", padding: "8px 16px", borderRadius: "8px", fontWeight: 700, cursor: "pointer", transition: "all 0.2s" }}
                     onClick={() => removeIncident(selectedIncident.incident_id)}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = '#fef2f2'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#fff'; }}
                   >
-                    Delete Incident
+                    🗑️ Retract Incident
                   </button>
                 </div>
               </div>
             )}
           </div>
 
-          <div className="card card-pad">
-            <div className="title" style={{ fontSize: 14 }}>Recommended Actions</div>
-            <div className="small" style={{ marginTop: 8 }}>
-              HIGH → dispatch crew + isolate section immediately.<br />
-              MEDIUM → schedule repair within 24–48 hours.<br />
-              LOW → monitor and plan preventive maintenance.
+          <div className="card card-pad" style={{ background: "#f0fdf4", border: "1px dashed #6ee7b7" }}>
+            <div style={{ fontSize: "14px", fontWeight: 800, color: "#065f46" }}>💡 Action Matrix</div>
+            <div style={{ fontSize: "13px", marginTop: "8px", color: "#064e3b", lineHeight: "1.6", display: "flex", flexDirection: "column", gap: "6px" }}>
+              <div><b style={{ color: "#e11d48" }}>HIGH IMPACT</b> → Dispatch crisis crew + Isolate grid section immediately.</div>
+              <div><b style={{ color: "#d97706" }}>MEDIUM IMPACT</b> → Schedule civil repair within 24–48 operating hours.</div>
+              <div><b style={{ color: "#059669" }}>LOW IMPACT</b> → Monitor asset telemetry and plan preventive maintenance.</div>
             </div>
           </div>
         </div>
       </div>
+      <style>{`
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @media (max-width: 900px) {
+        .grid { grid-template-columns: 1fr !important; }
+        .formGrid { grid-template-columns: 1fr !important; }
+      }
+    `}</style>
     </div>
   );
 }
