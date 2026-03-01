@@ -451,3 +451,24 @@ body{
   gap:10px;
   padding:8px 0;
 }
+.nav-icon {
+  width: 20px;
+  height: 20px;
+  margin-right: 10px;
+  object-fit: contain;
+}
+.sidebar-item.active .nav-icon {
+  filter: invert(1);
+}
+.navIconImg{
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.navItem{
+  color: #0f172a;
+}
+.navItem.active{
+  color: #ffffff; 
+}

@@ -19,15 +19,28 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
+
+        <Route
+          element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          }
+        >
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+          {/* Decision Hub page */}
           <Route path="/system-hub" element={<SystemHub />} />
+
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/pipelines" element={<Pipelines />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/maintenance" element={<Maintenance />} />
+
+          {/* Optional: if someone types /decision-hub, redirect to system-hub */}
+          <Route path="/decision-hub" element={<Navigate to="/system-hub" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -1,21 +1,19 @@
 import { NavLink, useNavigate } from "react-router-dom";
 
-function NavItem({ to, icon, label, badge }) {
+function NavItem({ to, iconSrc, label, badge }) {
   return (
     <NavLink
       to={to}
-      className={({ isActive }) =>
-        `navItem ${isActive ? "active" : ""}`
-      }
+      className={({ isActive }) => `navItem ${isActive ? "active" : ""}`}
     >
       <div className="navLeft">
-        <span className="navIcon">{icon}</span>
-        <span>{label}</span>
+        <span className="navIcon">
+          <img src={iconSrc} alt="" className="navIconImg" />
+        </span>
+        <span className="navLabel">{label}</span>
       </div>
 
-      {badge ? (
-        <span className="navBadge">{badge}</span>
-      ) : null}
+      {badge ? <span className="navBadge">{badge}</span> : null}
     </NavLink>
   );
 }
@@ -42,18 +40,45 @@ export default function Sidebar({ alertsCount = 0 }) {
 
       {/* Navigation */}
       <nav className="nav">
-        <NavItem to="/dashboard" icon="📊" label="Dashboard" />
-        <NavItem to="/system-hub" icon="🎯" label="Decision Hub" />
-        <NavItem to="/pipelines" icon="🧱" label="Pipelines" />
-        <NavItem to="/analytics" icon="📈" label="Analytics" />
-        <NavItem to="/reports" icon="📑" label="Reports & Analytics" />
+        <NavItem to="/dashboard" iconSrc="/icons/home.svg" label="Dashboard" />
+
+        {/* Decision Hub -> SystemHub route */}
+        <NavItem
+          to="/system-hub"
+          iconSrc="/icons/decision.svg"
+          label="Decision Hub"
+        />
+
+        <NavItem
+          to="/pipelines"
+          iconSrc="/icons/pipelines.svg"
+          label="Pipelines"
+        />
+
+        <NavItem
+          to="/analytics"
+          iconSrc="/icons/analytics.svg"
+          label="Analytics"
+        />
+
+        <NavItem
+          to="/reports"
+          iconSrc="/icons/reports.svg"
+          label="Reports"
+        />
+
         <NavItem
           to="/alerts"
-          icon="🚨"
+          iconSrc="/icons/alerts.svg"
           label="Alerts"
-          badge={alertsCount > 0 ? alertsCount : null}
+          badge={alertsCount ? String(alertsCount) : null}
         />
-        <NavItem to="/maintenance" icon="🛠️" label="Maintenance & Operations" />
+
+        <NavItem
+          to="/maintenance"
+          iconSrc="/icons/maintenance.svg"
+          label="Maintenance & Operations"
+        />
       </nav>
 
       {/* Footer */}
@@ -64,6 +89,7 @@ export default function Sidebar({ alertsCount = 0 }) {
         <div className="small" style={{ marginTop: 6, marginBottom: 12 }}>
           Dataset-based Monitoring
         </div>
+
         <button
           onClick={handleLogout}
           style={{
@@ -79,7 +105,7 @@ export default function Sidebar({ alertsCount = 0 }) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            gap: "6px"
+            gap: "6px",
           }}
         >
           <span>🚪</span> Logout
