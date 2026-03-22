@@ -1,15 +1,20 @@
 import { NavLink, useNavigate } from "react-router-dom";
 
-function NavItem({ to, iconSrc, label, badge }) {
+function NavItem({ to, iconSrc, label, badge, itemColor, activeColor }) {
   return (
     <NavLink
       to={to}
       className={({ isActive }) => `navItem ${isActive ? "active" : ""}`}
+      style={({ isActive }) => ({
+        color: isActive ? activeColor || "#ffffff" : itemColor || "#0f172a",
+      })}
     >
       <div className="navLeft">
-        <span className="navIcon">
-          <img src={iconSrc} alt="" className="navIconImg" />
-        </span>
+        <span
+          className="navIcon"
+          style={{ "--icon-url": `url(${iconSrc})` }}
+        ></span>
+
         <span className="navLabel">{label}</span>
       </div>
 
@@ -29,7 +34,6 @@ export default function Sidebar({ alertsCount = 0 }) {
 
   return (
     <aside className="sidebar">
-      {/* Brand */}
       <div className="brand">
         <div className="brandIcon">💧</div>
         <div>
@@ -38,33 +42,45 @@ export default function Sidebar({ alertsCount = 0 }) {
         </div>
       </div>
 
-      {/* Navigation */}
       <nav className="nav">
-        <NavItem to="/dashboard" iconSrc="/icons/home.svg" label="Dashboard" />
+        <NavItem
+          to="/dashboard"
+          iconSrc="/icons/home.svg"
+          label="Dashboard"
+          itemColor="#2563eb"
+          activeColor="#ffffff"
+        />
 
-        {/* Decision Hub -> SystemHub route */}
         <NavItem
           to="/system-hub"
           iconSrc="/icons/decision.svg"
           label="Decision Hub"
+          itemColor="#dc2626"
+          activeColor="#ffffff"
         />
 
         <NavItem
           to="/pipelines"
           iconSrc="/icons/pipelines.svg"
           label="Pipelines"
+          itemColor="#16a34a"
+          activeColor="#ffffff"
         />
 
         <NavItem
           to="/analytics"
           iconSrc="/icons/analytics.svg"
           label="Analytics"
+          itemColor="#7c3aed"
+          activeColor="#ffffff"
         />
 
         <NavItem
           to="/reports"
           iconSrc="/icons/reports.svg"
           label="Reports"
+          itemColor="#ea580c"
+          activeColor="#ffffff"
         />
 
         <NavItem
@@ -72,16 +88,19 @@ export default function Sidebar({ alertsCount = 0 }) {
           iconSrc="/icons/alerts.svg"
           label="Alerts"
           badge={alertsCount ? String(alertsCount) : null}
+          itemColor="#e11d48"
+          activeColor="#ffffff"
         />
 
         <NavItem
           to="/maintenance"
           iconSrc="/icons/maintenance.svg"
           label="Maintenance & Operations"
+          itemColor="#0f766e"
+          activeColor="#ffffff"
         />
       </nav>
 
-      {/* Footer */}
       <div className="sidebarFooter">
         <div className="small">
           Status: <span className="statusDot"></span> System Online
