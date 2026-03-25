@@ -7,17 +7,17 @@ function severityBadge(sev) {
 export default function AlertPanel({ alerts = [] }) {
   return (
     <div className="card card-pad">
-      <div className="hstack" style={{ justifyContent: "space-between" }}>
+      <div className="sectionHeader">
         <div>
-          <div className="title" style={{ fontSize: 14 }}>Alerts</div>
-          <div className="small">Rule-based alerts (DB data only)</div>
+          <div className="sectionTitle">Active alerts</div>
+          <div className="sectionSubtitle">Generated from high-risk pipelines and leak history.</div>
         </div>
-        <span className="badge">{alerts.length} Total</span>
+        <span className="badge">{alerts.length} alerts</span>
       </div>
 
-      <div className="vstack" style={{ marginTop: 12 }}>
+      <div className="vstack">
         {alerts.length === 0 ? (
-          <div className="small">No alerts right now.</div>
+          <div className="emptyState">No active alerts right now.</div>
         ) : (
           alerts.map((a) => (
             <div key={a.id} className="alertItem">
@@ -26,7 +26,7 @@ export default function AlertPanel({ alerts = [] }) {
                 <span className={severityBadge(a.severity)}>{a.severity}</span>
               </div>
               <div className="alertMeta">
-                Pipeline: <b>{a.pipeline_id}</b> • Area: {a.area} • {a.time}
+                Pipeline <b>{a.pipeline_id}</b> • {a.area} • {a.time}
               </div>
             </div>
           ))

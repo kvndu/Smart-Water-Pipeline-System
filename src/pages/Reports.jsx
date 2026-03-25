@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import api from "../utils/api.js";
 import {
   ResponsiveContainer,
@@ -38,8 +39,30 @@ function downloadCSV(filename, rows) {
   link.click();
 }
 
+function getRainStatus(rainMm) {
+  const value = Number(rainMm || 0);
+  if (value <= 0) return "No rain";
+  if (value <= 2) return "Light rain";
+  if (value <= 5) return "Moderate rain";
+  if (value <= 10) return "Heavy rain";
+  return "Very heavy rain";
+}
+
+function riskBadgeClass(level) {
+  if (level === "High") return "danger";
+  if (level === "Medium") return "warn";
+  return "ok";
+}
+
+function priorityBadgeClass(priority) {
+  if (priority === "Critical") return "danger";
+  if (priority === "Moderate") return "warn";
+  return "ok";
+}
+
 export default function Reports() {
   const [pipelines, setPipelines] = useState([]);
+  const [liveRain, setLiveRain] = useState(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -49,11 +72,18 @@ export default function Reports() {
       try {
         setLoading(true);
         setErrorMsg("");
-        const res = await api.get("/pipelines-with-risk?limit=100");
-        setPipelines(Array.isArray(res.data) ? res.data : []);
+
+        const [pipelineRes, rainRes] = await Promise.all([
+          api.get("/pipelines-with-risk?limit=2000"),
+          api.get("/live-rain"),
+        ]);
+
+        setPipelines(Array.isArray(pipelineRes.data) ? pipelineRes.data : []);
+        setLiveRain(rainRes.data || null);
       } catch (err) {
         console.error("Reports fetch error:", err);
         setPipelines([]);
+        setLiveRain(null);
         setErrorMsg("Failed to load reports data.");
       } finally {
         setLoading(false);
@@ -63,6 +93,8 @@ export default function Reports() {
     fetchReportsData();
   }, []);
 
+  const generatedAt = useMemo(() => new Date(), []);
+
   const totalPipelines = pipelines.length;
 
   const totalLeaks = useMemo(() => {
@@ -70,7 +102,7 @@ export default function Reports() {
   }, [pipelines]);
 
   const avgRiskScore = useMemo(() => {
-    if (!pipelines.length) return 0;
+    if (!pipelines.length) return "0.000";
     const total = pipelines.reduce((sum, p) => sum + Number(p.risk_score || 0), 0);
     return (total / pipelines.length).toFixed(3);
   }, [pipelines]);
@@ -80,9 +112,35 @@ export default function Reports() {
     return Math.min(...pipelines.map((p) => Number(p.install_year || 9999)));
   }, [pipelines]);
 
-  const highRiskCount = pipelines.filter((p) => p.risk_level === "High").length;
-  const mediumRiskCount = pipelines.filter((p) => p.risk_level === "Medium").length;
-  const lowRiskCount = pipelines.filter((p) => p.risk_level === "Low").length;
+  const highRiskCount = useMemo(
+    () => pipelines.filter((p) => p.risk_level === "High").length,
+    [pipelines]
+  );
+
+  const mediumRiskCount = useMemo(
+    () => pipelines.filter((p) => p.risk_level === "Medium").length,
+    [pipelines]
+  );
+
+  const lowRiskCount = useMemo(
+    () => pipelines.filter((p) => p.risk_level === "Low").length,
+    [pipelines]
+  );
+
+  const criticalTasks = useMemo(
+    () => pipelines.filter((p) => p.recommendation?.priority === "Critical").length,
+    [pipelines]
+  );
+
+  const moderateTasks = useMemo(
+    () => pipelines.filter((p) => p.recommendation?.priority === "Moderate").length,
+    [pipelines]
+  );
+
+  const lowPriorityTasks = useMemo(
+    () => pipelines.filter((p) => (p.recommendation?.priority || "Low") === "Low").length,
+    [pipelines]
+  );
 
   const riskDistribution = useMemo(() => {
     return [
@@ -95,15 +153,19 @@ export default function Reports() {
   const materialDistribution = useMemo(() => {
     const counts = {};
     pipelines.forEach((p) => {
-      counts[p.material_type] = (counts[p.material_type] || 0) + 1;
+      const key = p.material_type || "Unknown";
+      counts[key] = (counts[key] || 0) + 1;
     });
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
   }, [pipelines]);
 
   const divisionDistribution = useMemo(() => {
     const counts = {};
     pipelines.forEach((p) => {
-      counts[p.ds_division] = (counts[p.ds_division] || 0) + 1;
+      const key = p.ds_division || "Unknown";
+      counts[key] = (counts[key] || 0) + 1;
     });
     return Object.entries(counts)
       .map(([name, value]) => ({ name, value }))
@@ -120,6 +182,40 @@ export default function Reports() {
       .slice(0, 10);
   }, [pipelines]);
 
+  const topRiskPipelines = useMemo(() => {
+    return [...pipelines]
+      .sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0))
+      .slice(0, 15);
+  }, [pipelines]);
+
+  const topRiskDivisions = useMemo(() => {
+    const grouped = {};
+
+    pipelines.forEach((p) => {
+      const key = p.ds_division || "Unknown";
+      if (!grouped[key]) {
+        grouped[key] = {
+          division: key,
+          count: 0,
+          totalRisk: 0,
+          highRisk: 0,
+        };
+      }
+
+      grouped[key].count += 1;
+      grouped[key].totalRisk += Number(p.risk_score || 0);
+      if (p.risk_level === "High") grouped[key].highRisk += 1;
+    });
+
+    return Object.values(grouped)
+      .map((item) => ({
+        ...item,
+        avgRisk: item.count ? (item.totalRisk / item.count).toFixed(3) : "0.000",
+      }))
+      .sort((a, b) => Number(b.avgRisk) - Number(a.avgRisk))
+      .slice(0, 8);
+  }, [pipelines]);
+
   const exportRows = useMemo(() => {
     return pipelines.map((p) => ({
       pipeline_id: p.pipeline_id,
@@ -129,9 +225,11 @@ export default function Reports() {
       install_year: p.install_year,
       previous_leak_count: p.previous_leak_count,
       annual_rainfall_mm: p.annual_rainfall_mm,
-      risk_score: p.risk_score,
+      risk_score: Number(p.risk_score || 0).toFixed(3),
       risk_level: p.risk_level,
-      recommendation: p.recommendation,
+      recommendation_action: p.recommendation?.action || "",
+      recommendation_priority: p.recommendation?.priority || "",
+      recommendation_message: p.recommendation?.message || "",
     }));
   }, [pipelines]);
 
@@ -143,8 +241,8 @@ export default function Reports() {
     }, 400);
   }
 
-  function handleDownloadPDF() {
-    setDownloading("pdf");
+  function handlePrintReport() {
+    setDownloading("print");
     setTimeout(() => {
       window.print();
       setDownloading("");
@@ -153,17 +251,17 @@ export default function Reports() {
 
   return (
     <div className="container" style={{ animation: "fadeIn 0.4s ease-in-out" }}>
-      <div className="header" style={{ marginBottom: "24px" }}>
+      <div className="pageHero">
         <div>
-          <div className="title" style={{ fontSize: "24px", color: "var(--primary)" }}>
-            Reports & Analytics
-          </div>
-          <div className="subtitle" style={{ fontSize: "14px" }}>
-            Summary reports for Kalutara district: risk distribution, materials, divisions, and leak records.
+          <div className="heroEyebrow">Reporting</div>
+          <div className="pageTitle">Reports & Analytics</div>
+          <div className="pageSubtitle">
+            Summary reports for Kalutara district: risk distribution, materials,
+            divisions, maintenance priority, and leak records.
           </div>
         </div>
 
-        <div className="hstack">
+        <div className="pageActions no-print" style={{ flexWrap: "wrap" }}>
           <button
             className="btn"
             style={{
@@ -178,17 +276,17 @@ export default function Reports() {
             disabled={!!downloading}
           >
             <span style={{ fontSize: "16px" }}>📊</span>
-            {downloading === "excel" ? "Generating..." : "Download Excel"}
+            {downloading === "excel" ? "Generating..." : "Export CSV"}
           </button>
 
           <button
             className="btn primary"
             style={{ display: "flex", alignItems: "center", gap: "6px" }}
-            onClick={handleDownloadPDF}
+            onClick={handlePrintReport}
             disabled={!!downloading}
           >
-            <span style={{ fontSize: "16px" }}>📄</span>
-            {downloading === "pdf" ? "Preparing..." : "Download PDF"}
+            <span style={{ fontSize: "16px" }}>🖨️</span>
+            {downloading === "print" ? "Preparing..." : "Print Report"}
           </button>
         </div>
       </div>
@@ -199,6 +297,36 @@ export default function Reports() {
         <div className="card card-pad" style={{ color: "red" }}>{errorMsg}</div>
       ) : (
         <>
+          <div className="card card-pad" style={{ marginBottom: 24 }}>
+            <div className="sectionHeader">
+              <div>
+                <div className="sectionTitle">Report metadata</div>
+                <div className="sectionSubtitle">
+                  Current report generation context.
+                </div>
+              </div>
+            </div>
+
+            <div className="detailGrid reportMetaGrid">
+              <div className="detailItem">
+                <div className="detailLabel">District</div>
+                <div className="detailValue">Kalutara</div>
+              </div>
+              <div className="detailItem">
+                <div className="detailLabel">Generated date</div>
+                <div className="detailValue">{generatedAt.toLocaleDateString()}</div>
+              </div>
+              <div className="detailItem">
+                <div className="detailLabel">Generated time</div>
+                <div className="detailValue">{generatedAt.toLocaleTimeString()}</div>
+              </div>
+              <div className="detailItem">
+                <div className="detailLabel">Data sources</div>
+                <div className="detailValue">Supabase + Open Meteo + rule-based engine</div>
+              </div>
+            </div>
+          </div>
+
           <div className="kpiGrid">
             <div
               className="card card-pad"
@@ -218,8 +346,19 @@ export default function Reports() {
                 borderColor: "#fecaca",
               }}
             >
-              <div className="kpiLabel" style={{ color: "#b91c1c" }}>Total Leak Records</div>
-              <div className="kpiValue" style={{ color: "#7f1d1d" }}>{totalLeaks}</div>
+              <div className="kpiLabel" style={{ color: "#b91c1c" }}>High Risk Pipelines</div>
+              <div className="kpiValue" style={{ color: "#7f1d1d" }}>{highRiskCount}</div>
+            </div>
+
+            <div
+              className="card card-pad"
+              style={{
+                background: "linear-gradient(135deg, #fefce8 0%, #fef3c7 100%)",
+                borderColor: "#fde68a",
+              }}
+            >
+              <div className="kpiLabel" style={{ color: "#a16207" }}>Medium Risk Pipelines</div>
+              <div className="kpiValue" style={{ color: "#854d0e" }}>{mediumRiskCount}</div>
             </div>
 
             <div
@@ -236,12 +375,71 @@ export default function Reports() {
             <div
               className="card card-pad"
               style={{
+                background: "linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)",
+                borderColor: "#fdba74",
+              }}
+            >
+              <div className="kpiLabel" style={{ color: "#c2410c" }}>Critical Maintenance</div>
+              <div className="kpiValue" style={{ color: "#9a3412" }}>{criticalTasks}</div>
+            </div>
+
+            <div
+              className="card card-pad"
+              style={{
                 background: "linear-gradient(135deg, #fdf4ff 0%, #fae8ff 100%)",
                 borderColor: "#f5d0fe",
               }}
             >
-              <div className="kpiLabel" style={{ color: "#86198f" }}>Oldest Install Year</div>
-              <div className="kpiValue" style={{ color: "#4a044e" }}>{oldestInstallYear}</div>
+              <div className="kpiLabel" style={{ color: "#86198f" }}>Total Leak Records</div>
+              <div className="kpiValue" style={{ color: "#4a044e" }}>{totalLeaks}</div>
+            </div>
+          </div>
+
+          <div
+            className="card card-pad"
+            style={{ marginTop: 24, marginBottom: 24 }}
+          >
+            <div className="sectionHeader">
+              <div>
+                <div className="sectionTitle">Executive summary</div>
+                <div className="sectionSubtitle">
+                  High-level interpretation of the current dataset.
+                </div>
+              </div>
+            </div>
+
+            <div className="vstack">
+              <div className="detailItem">
+                <div className="detailLabel">Risk overview</div>
+                <div className="detailValue">
+                  Out of {totalPipelines} pipelines, {highRiskCount} are High risk, {mediumRiskCount} are Medium risk, and {lowRiskCount} are Low risk.
+                </div>
+              </div>
+
+              <div className="detailItem">
+                <div className="detailLabel">Maintenance priority</div>
+                <div className="detailValue">
+                  Critical tasks: {criticalTasks} • Moderate tasks: {moderateTasks} • Low priority tasks: {lowPriorityTasks}
+                </div>
+              </div>
+
+              <div className="detailItem">
+                <div className="detailLabel">Rain condition</div>
+                <div className="detailValue">
+                  {liveRain
+                    ? `Kalutara live rain is ${Number(liveRain.rain_mm || 0).toFixed(1)} mm (${getRainStatus(
+                        liveRain.rain_mm
+                      )}), updated at ${liveRain.updated_time || "-"}`
+                    : "Live rain data not available."}
+                </div>
+              </div>
+
+              <div className="detailItem">
+                <div className="detailLabel">Asset age insight</div>
+                <div className="detailValue">
+                  The oldest recorded pipeline installation year in the current dataset is {oldestInstallYear}.
+                </div>
+              </div>
             </div>
           </div>
 
@@ -254,7 +452,6 @@ export default function Reports() {
               marginTop: "24px",
             }}
           >
-            {/* Risk Distribution */}
             <div
               className="card card-pad"
               style={{ height: "380px", display: "flex", flexDirection: "column" }}
@@ -288,7 +485,6 @@ export default function Reports() {
               </div>
             </div>
 
-            {/* Material Distribution */}
             <div
               className="card card-pad"
               style={{ height: "380px", display: "flex", flexDirection: "column" }}
@@ -301,7 +497,7 @@ export default function Reports() {
 
               <div style={{ flex: 1, minHeight: 0 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={materialDistribution} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <BarChart data={materialDistribution.slice(0, 8)} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                     <XAxis dataKey="name" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
@@ -319,7 +515,6 @@ export default function Reports() {
               </div>
             </div>
 
-            {/* Division Distribution */}
             <div
               className="card card-pad"
               style={{ height: "380px", display: "flex", flexDirection: "column" }}
@@ -332,7 +527,7 @@ export default function Reports() {
 
               <div style={{ flex: 1, minHeight: 0 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={divisionDistribution} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                  <BarChart data={divisionDistribution.slice(0, 8)} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
                     <XAxis
                       dataKey="name"
@@ -358,7 +553,6 @@ export default function Reports() {
               </div>
             </div>
 
-            {/* Top Leak Pipelines */}
             <div
               className="card card-pad"
               style={{ height: "380px", display: "flex", flexDirection: "column" }}
@@ -398,10 +592,74 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* Summary Table */}
+          <div className="panelGrid" style={{ marginTop: 24 }}>
+            <div className="card card-pad">
+              <div className="sectionHeader">
+                <div>
+                  <div className="sectionTitle">Top risky divisions</div>
+                  <div className="sectionSubtitle">
+                    Divisions ordered by average risk score.
+                  </div>
+                </div>
+              </div>
+
+              <div className="vstack">
+                {topRiskDivisions.map((item) => (
+                  <div key={item.division} className="detailItem">
+                    <div className="detailLabel">{item.division}</div>
+                    <div className="detailValue">
+                      Avg Risk: {item.avgRisk} • Pipelines: {item.count} • High Risk: {item.highRisk}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card card-pad">
+              <div className="sectionHeader">
+                <div>
+                  <div className="sectionTitle">Rain & maintenance context</div>
+                  <div className="sectionSubtitle">
+                    Operational conditions relevant to reporting.
+                  </div>
+                </div>
+              </div>
+
+              <div className="vstack">
+                <div className="detailItem">
+                  <div className="detailLabel">Live rain</div>
+                  <div className="detailValue">
+                    {liveRain
+                      ? `${Number(liveRain.rain_mm || 0).toFixed(1)} mm • ${getRainStatus(
+                          liveRain.rain_mm
+                        )}`
+                      : "Not available"}
+                  </div>
+                </div>
+
+                <div className="detailItem">
+                  <div className="detailLabel">Rain score</div>
+                  <div className="detailValue">
+                    {liveRain ? Number(liveRain.rain_score || 0).toFixed(2) : "-"}
+                  </div>
+                </div>
+
+                <div className="detailItem">
+                  <div className="detailLabel">Critical maintenance tasks</div>
+                  <div className="detailValue">{criticalTasks}</div>
+                </div>
+
+                <div className="detailItem">
+                  <div className="detailLabel">Moderate maintenance tasks</div>
+                  <div className="detailValue">{moderateTasks}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="card card-pad" style={{ marginTop: "24px" }}>
             <div className="title" style={{ fontSize: "16px", marginBottom: "16px" }}>
-              Report Summary Table
+              Top risky pipeline summary table
             </div>
 
             <div style={{ overflowX: "auto" }}>
@@ -416,21 +674,38 @@ export default function Reports() {
                     <th>Leak Count</th>
                     <th>Risk Score</th>
                     <th>Risk Level</th>
-                    <th>Recommendation</th>
+                    <th>Priority</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pipelines.slice(0, 15).map((p) => (
+                  {topRiskPipelines.map((p) => (
                     <tr key={p.pipeline_id}>
-                      <td>{p.pipeline_id}</td>
-                      <td>{p.ds_division}</td>
-                      <td>{p.area_name}</td>
-                      <td>{p.material_type}</td>
-                      <td>{p.install_year}</td>
-                      <td>{p.previous_leak_count}</td>
-                      <td>{p.risk_score}</td>
-                      <td>{p.risk_level}</td>
-                      <td>{p.recommendation}</td>
+                      <td>
+                        <Link
+                          to={`/pipelines/${p.pipeline_id}`}
+                          style={{ textDecoration: "none", color: "var(--primary)", fontWeight: 800 }}
+                        >
+                          {p.pipeline_id}
+                        </Link>
+                      </td>
+                      <td>{p.ds_division || "-"}</td>
+                      <td>{p.area_name || "-"}</td>
+                      <td>{p.material_type || "-"}</td>
+                      <td>{p.install_year || "-"}</td>
+                      <td>{p.previous_leak_count || 0}</td>
+                      <td>{Number(p.risk_score || 0).toFixed(3)}</td>
+                      <td>
+                        <span className={`badge ${riskBadgeClass(p.risk_level)}`}>
+                          {p.risk_level}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge ${priorityBadgeClass(p.recommendation?.priority || "Low")}`}>
+                          {p.recommendation?.priority || "Low"}
+                        </span>
+                      </td>
+                      <td>{p.recommendation?.action || "-"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -447,14 +722,32 @@ export default function Reports() {
         }
 
         @media print {
-          .sidebar, .btn { display: none !important; }
-          .appMain { background: #fff !important; }
-          .card { box-shadow: none !important; border-color: #000 !important; }
-          body { background: #fff !important; }
+          .sidebar, .btn, .no-print {
+            display: none !important;
+          }
+
+          .appMain, body {
+            background: #fff !important;
+          }
+
+          .card {
+            box-shadow: none !important;
+            border-color: #000 !important;
+          }
+
+          .container {
+            padding: 0 !important;
+          }
         }
 
         @media (max-width: 1000px) {
-          .chartsSection { grid-template-columns: 1fr !important; }
+          .chartsSection {
+            grid-template-columns: 1fr !important;
+          }
+
+          .reportMetaGrid {
+            grid-template-columns: 1fr !important;
+          }
         }
       `}</style>
     </div>

@@ -8,6 +8,10 @@ import Alerts from "./pages/Alerts.jsx";
 import Maintenance from "./pages/Maintenance.jsx";
 import Login from "./pages/Login.jsx";
 import SystemHub from "./pages/SystemHub.jsx";
+import RiskCalculator from "./pages/RiskCalculator";
+import PipelineDetail from "./pages/PipelineDetail.jsx";
+import MapView from "./pages/MapView.jsx";
+import PipelineNetworkView from "./pages/PipelineNetworkView.jsx";
 
 function ProtectedRoute({ children }) {
   const isAuth = localStorage.getItem("waterflow_auth") === "true";
@@ -34,10 +38,14 @@ export default function App() {
 
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/pipelines" element={<Pipelines />} />
+          <Route path="/pipelines/:id" element={<PipelineDetail />} />
           <Route path="/analytics" element={<Analytics />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/alerts" element={<Alerts />} />
           <Route path="/maintenance" element={<Maintenance />} />
+          <Route path="/risk-calculator" element={<RiskCalculator />} />
+          <Route path="/map-view" element={<MapView />} />
+          <Route path="/pipeline-network" element={<PipelineNetworkView />} />
 
           {/* Optional: if someone types /decision-hub, redirect to system-hub */}
           <Route path="/decision-hub" element={<Navigate to="/system-hub" replace />} />

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import api from "../utils/api.js";
 
 const LS_KEY = "waterflow_incidents_v1";
@@ -43,11 +44,53 @@ function badgeClassForPipelineStatus(st) {
   return "ok";
 }
 
+function badgeClassForPriority(priority) {
+  if (priority === "Critical") return "danger";
+  if (priority === "Moderate") return "warn";
+  return "ok";
+}
+
 function severityFromPipeline(p) {
   if (!p) return "LOW";
   if (p.risk_level === "High") return "HIGH";
   if (p.risk_level === "Medium") return "MEDIUM";
   return "LOW";
+}
+
+function buildRuleBasedAlerts(pipelines) {
+  const alerts = [];
+
+  pipelines.forEach((p) => {
+    const leaks = Number(p.previous_leak_count || 0);
+
+    if (p.risk_level === "High") {
+      alerts.push({
+        id: `${p.pipeline_id}-risk`,
+        pipeline_id: p.pipeline_id,
+        area_name: p.area_name,
+        ds_division: p.ds_division,
+        title: "High risk pipeline",
+        severity: "HIGH",
+        reason: "This pipeline is classified as High risk by the risk engine.",
+        recommendation: p.recommendation || null,
+      });
+    }
+
+    if (leaks >= 2) {
+      alerts.push({
+        id: `${p.pipeline_id}-leaks`,
+        pipeline_id: p.pipeline_id,
+        area_name: p.area_name,
+        ds_division: p.ds_division,
+        title: "Repeated leaks",
+        severity: p.risk_level === "High" ? "HIGH" : "MEDIUM",
+        reason: `This pipeline has ${leaks} recorded previous leaks.`,
+        recommendation: p.recommendation || null,
+      });
+    }
+  });
+
+  return alerts;
 }
 
 const INCIDENT_STATUSES = [
@@ -77,11 +120,15 @@ export default function Alerts() {
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState("");
 
+  const [search, setSearch] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("ALL");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+
   useEffect(() => {
     async function fetchPipelines() {
       try {
         setLoadingPipelines(true);
-        const res = await api.get("/pipelines-with-risk?limit=100");
+        const res = await api.get("/pipelines-with-risk?limit=2000");
         setPipelines(Array.isArray(res.data) ? res.data : []);
       } catch (err) {
         console.error("Alerts fetch error:", err);
@@ -100,7 +147,7 @@ export default function Alerts() {
 
   const pipelineMap = useMemo(() => {
     const m = new Map();
-    pipelines.forEach((p) => m.set(p.pipeline_id, p));
+    pipelines.forEach((p) => m.set(String(p.pipeline_id), p));
     return m;
   }, [pipelines]);
 
@@ -111,12 +158,30 @@ export default function Alerts() {
 
   const selectedPipeline = useMemo(() => {
     if (!selectedIncident) return null;
-    return pipelineMap.get(selectedIncident.pipeline_id) || null;
+    return pipelineMap.get(String(selectedIncident.pipeline_id)) || null;
   }, [selectedIncident, pipelineMap]);
 
   const sortedIncidents = useMemo(() => {
     return [...incidents].sort((a, b) => (a.detected_at < b.detected_at ? 1 : -1));
   }, [incidents]);
+
+  const filteredIncidents = useMemo(() => {
+    return sortedIncidents.filter((inc) => {
+      const matchesSearch =
+        !search.trim() ||
+        String(inc.pipeline_id).toLowerCase().includes(search.toLowerCase()) ||
+        String(inc.type).toLowerCase().includes(search.toLowerCase()) ||
+        String(inc.note || "").toLowerCase().includes(search.toLowerCase());
+
+      const matchesSeverity =
+        severityFilter === "ALL" || inc.severity === severityFilter;
+
+      const matchesStatus =
+        statusFilter === "ALL" || inc.status === statusFilter;
+
+      return matchesSearch && matchesSeverity && matchesStatus;
+    });
+  }, [sortedIncidents, search, severityFilter, statusFilter]);
 
   const stats = useMemo(() => {
     return {
@@ -126,6 +191,8 @@ export default function Alerts() {
       low: incidents.filter((i) => i.severity === "LOW").length,
     };
   }, [incidents]);
+
+  const ruleBasedAlerts = useMemo(() => buildRuleBasedAlerts(pipelines).slice(0, 8), [pipelines]);
 
   function onChange(e) {
     const { name, value } = e.target;
@@ -139,7 +206,7 @@ export default function Alerts() {
     const pid = form.pipeline_id.trim();
     if (!pid) return setError("Select a pipeline first.");
 
-    const p = pipelineMap.get(pid);
+    const p = pipelineMap.get(String(pid));
     if (!p) return setError("Invalid pipeline selected.");
 
     const severity = severityFromPipeline(p);
@@ -150,14 +217,14 @@ export default function Alerts() {
       pipeline_id: pid,
       type: form.type,
       severity,
-      risk_score: riskScore,
+      risk_score: riskScore.toFixed(3),
       detected_at: nowISO(),
       status: "NEW",
       pipeline_status: "UNDER_REPAIR",
       estimated_location: {
         lat: null,
         lng: null,
-        label: `${p.area_name} (${p.ds_division})`,
+        label: `${p.area_name || "-"} (${p.ds_division || "-"})`,
       },
       note: form.note?.trim() || "",
     };
@@ -215,7 +282,7 @@ export default function Alerts() {
           </div>
         </div>
 
-        <div className="hstack" style={{ gap: "10px" }}>
+        <div className="hstack" style={{ gap: "10px", flexWrap: "wrap" }}>
           <span
             className="badge"
             style={{
@@ -226,7 +293,7 @@ export default function Alerts() {
               border: "1px solid #fde68a",
             }}
           >
-            🛡️ Rule-based Engine
+            Rule-based Engine
           </span>
 
           <span
@@ -241,10 +308,13 @@ export default function Alerts() {
           >
             {stats.total} Incidents
           </span>
+
+          <span className="badge ok">
+            Auto alerts: {ruleBasedAlerts.length}
+          </span>
         </div>
       </div>
 
-      {/* KPI */}
       <div
         style={{
           display: "grid",
@@ -271,7 +341,6 @@ export default function Alerts() {
         </div>
       </div>
 
-      {/* Create Incident */}
       <div
         className="card card-pad"
         style={{
@@ -287,11 +356,13 @@ export default function Alerts() {
             borderBottom: "1px dashed #cbd5e1",
             paddingBottom: "12px",
             marginBottom: "16px",
+            gap: "12px",
+            flexWrap: "wrap",
           }}
         >
           <div>
             <div className="title" style={{ fontSize: "16px", color: "var(--text)" }}>
-              📝 Report New Incident
+              Report New Incident
             </div>
             <div className="small" style={{ color: "var(--muted)" }}>
               Select a pipeline and incident type. Severity is derived from the pipeline risk level.
@@ -434,6 +505,97 @@ export default function Alerts() {
       </div>
 
       <div
+        className="card card-pad"
+        style={{ marginTop: 24, border: "1px solid #e2e8f0" }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: "12px",
+            flexWrap: "wrap",
+            marginBottom: "16px",
+          }}
+        >
+          <div>
+            <div className="title" style={{ fontSize: "16px", color: "var(--text)" }}>
+              Incident filters
+            </div>
+            <div className="small" style={{ color: "var(--muted)" }}>
+              Search and filter incident records.
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(180px, 1fr) 160px 180px",
+              gap: "10px",
+              width: "100%",
+              maxWidth: "760px",
+            }}
+            className="alertsFilterGrid"
+          >
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by pipeline ID, type, or note"
+              style={{
+                width: "100%",
+                padding: "11px 12px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                background: "#fff",
+              }}
+            />
+
+            <select
+              value={severityFilter}
+              onChange={(e) => setSeverityFilter(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "11px 12px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                background: "#fff",
+                fontWeight: 600,
+              }}
+            >
+              <option value="ALL">All Severity</option>
+              <option value="HIGH">High</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="LOW">Low</option>
+            </select>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "11px 12px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                background: "#fff",
+                fontWeight: 600,
+              }}
+            >
+              <option value="ALL">All Status</option>
+              {INCIDENT_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="small" style={{ color: "var(--muted)" }}>
+          Showing {filteredIncidents.length} of {incidents.length} incidents.
+        </div>
+      </div>
+
+      <div
         className="grid"
         style={{
           marginTop: 24,
@@ -442,7 +604,6 @@ export default function Alerts() {
           gap: "24px",
         }}
       >
-        {/* Left: Incident list */}
         <div className="vstack" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <div
             className="card card-pad"
@@ -454,7 +615,7 @@ export default function Alerts() {
           >
             <div style={{ marginBottom: "16px", borderBottom: "1px dashed #e2e8f0", paddingBottom: "12px" }}>
               <div className="title" style={{ fontSize: "16px", color: "var(--text)" }}>
-                📋 Incident Log
+                Incident Log
               </div>
               <div className="small" style={{ color: "var(--muted)", marginTop: "4px" }}>
                 Select a logged incident to manage workflow.
@@ -472,7 +633,7 @@ export default function Alerts() {
                 paddingRight: "4px",
               }}
             >
-              {sortedIncidents.length === 0 ? (
+              {filteredIncidents.length === 0 ? (
                 <div
                   style={{
                     padding: "30px",
@@ -484,10 +645,10 @@ export default function Alerts() {
                     fontWeight: 600,
                   }}
                 >
-                  No incidents reported. System clear.
+                  No incidents found for the selected filters.
                 </div>
               ) : (
-                sortedIncidents.map((inc) => (
+                filteredIncidents.map((inc) => (
                   <button
                     key={inc.incident_id}
                     onClick={() => setSelectedId(inc.incident_id)}
@@ -510,7 +671,9 @@ export default function Alerts() {
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
+                        gap: "10px",
                         width: "100%",
+                        flexWrap: "wrap",
                       }}
                     >
                       <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text)" }}>
@@ -529,10 +692,12 @@ export default function Alerts() {
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
+                        gap: "8px",
                         width: "100%",
+                        flexWrap: "wrap",
                       }}
                     >
-                      <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
                         <span style={{ fontSize: "12px", color: "#64748b" }}>Status:</span>
                         <span
                           className={`badge ${badgeClassForIncidentStatus(inc.status)}`}
@@ -551,9 +716,68 @@ export default function Alerts() {
               )}
             </div>
           </div>
+
+          <div className="card card-pad" style={{ border: "1px solid #e2e8f0" }}>
+            <div style={{ marginBottom: "16px" }}>
+              <div className="title" style={{ fontSize: "16px", color: "var(--text)" }}>
+                Auto-generated alerts
+              </div>
+              <div className="small" style={{ color: "var(--muted)", marginTop: "4px" }}>
+                System flagged pipelines based on current risk and leak history.
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {ruleBasedAlerts.length === 0 ? (
+                <div className="emptyState">No auto alerts available.</div>
+              ) : (
+                ruleBasedAlerts.map((alert) => (
+                  <div
+                    key={alert.id}
+                    style={{
+                      border: "1px solid #e2e8f0",
+                      borderRadius: "10px",
+                      padding: "12px",
+                      background: "#fff",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "8px",
+                        flexWrap: "wrap",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <div style={{ fontWeight: 800, color: "var(--text)" }}>
+                        {alert.title}
+                      </div>
+                      <span className={`badge ${badgeClassForSeverity(alert.severity)}`}>
+                        {alert.severity}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: "13px", color: "#475569", lineHeight: 1.6 }}>
+                      <div>
+                        <b>Pipeline:</b>{" "}
+                        <Link to={`/pipelines/${alert.pipeline_id}`} style={{ textDecoration: "none" }}>
+                          {alert.pipeline_id}
+                        </Link>
+                      </div>
+                      <div><b>Area:</b> {alert.area_name || "-"}</div>
+                      <div><b>Division:</b> {alert.ds_division || "-"}</div>
+                      <div><b>Reason:</b> {alert.reason}</div>
+                      <div><b>Action:</b> {alert.recommendation?.action || "-"}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Right: Details */}
         <div className="vstack" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
           <div
             className="card card-pad"
@@ -565,7 +789,7 @@ export default function Alerts() {
           >
             <div style={{ marginBottom: "16px", borderBottom: "1px dashed #e2e8f0", paddingBottom: "12px" }}>
               <div className="title" style={{ fontSize: "16px", color: "var(--text)" }}>
-                🔍 Response Toolkit
+                Response Toolkit
               </div>
             </div>
 
@@ -601,7 +825,7 @@ export default function Alerts() {
                         : "1px solid #e2e8f0",
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
                     <div>
                       <div style={{ fontSize: "20px", fontWeight: 900, color: "var(--text)" }}>
                         {selectedIncident.type} <span style={{ color: "var(--muted)" }}>@ {selectedIncident.pipeline_id}</span>
@@ -627,7 +851,7 @@ export default function Alerts() {
 
                 <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px" }}>
                   <div style={{ fontSize: "14px", fontWeight: 800, marginBottom: "12px", color: "var(--text)" }}>
-                    🛠️ Repair Workflow
+                    Repair Workflow
                   </div>
 
                   <div style={{ display: "flex", gap: "24px", marginBottom: "16px", flexWrap: "wrap" }}>
@@ -675,40 +899,98 @@ export default function Alerts() {
                 </div>
 
                 {selectedPipeline ? (
-                  <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px" }}>
-                    <div style={{ fontSize: "14px", fontWeight: 800, marginBottom: "12px", color: "var(--text)" }}>
-                      ⚙️ Underlying Asset Schema
+                  <>
+                    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px" }}>
+                      <div style={{ fontSize: "14px", fontWeight: 800, marginBottom: "12px", color: "var(--text)" }}>
+                        Selected Pipeline
+                      </div>
+
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: "12px",
+                          fontSize: "13px",
+                          background: "#f8fafc",
+                          padding: "12px",
+                          borderRadius: "8px",
+                        }}
+                        className="assetGrid"
+                      >
+                        <div><span style={{ color: "#64748b" }}>ID:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.pipeline_id}</b></div>
+                        <div><span style={{ color: "#64748b" }}>Division:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.ds_division || "-"}</b></div>
+                        <div><span style={{ color: "#64748b" }}>Area:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.area_name || "-"}</b></div>
+                        <div><span style={{ color: "#64748b" }}>Material:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.material_type || "-"}</b></div>
+                        <div><span style={{ color: "#64748b" }}>Diameter:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.diameter_mm || "-"} mm</b></div>
+                        <div><span style={{ color: "#64748b" }}>Length:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.pipe_length_m || "-"} m</b></div>
+                        <div><span style={{ color: "#64748b" }}>Install Year:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.install_year || "-"}</b></div>
+                        <div><span style={{ color: "#64748b" }}>Previous Leaks:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.previous_leak_count || 0}</b></div>
+                        <div><span style={{ color: "#64748b" }}>Risk Level:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.risk_level || "-"}</b></div>
+                        <div><span style={{ color: "#64748b" }}>Risk Score:</span> <b style={{ color: "var(--text)" }}>{Number(selectedPipeline.risk_score || 0).toFixed(3)}</b></div>
+                      </div>
                     </div>
 
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "1fr 1fr",
-                        gap: "12px",
-                        fontSize: "13px",
-                        background: "#f8fafc",
-                        padding: "12px",
-                        borderRadius: "8px",
-                      }}
-                    >
-                      <div><span style={{ color: "#64748b" }}>ID:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.pipeline_id}</b></div>
-                      <div><span style={{ color: "#64748b" }}>Division:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.ds_division}</b></div>
-                      <div><span style={{ color: "#64748b" }}>Area:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.area_name}</b></div>
-                      <div><span style={{ color: "#64748b" }}>Material:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.material_type}</b></div>
-                      <div><span style={{ color: "#64748b" }}>Diameter:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.diameter_mm} mm</b></div>
-                      <div><span style={{ color: "#64748b" }}>Length:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.pipe_length_m} m</b></div>
-                      <div><span style={{ color: "#64748b" }}>Install Year:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.install_year}</b></div>
-                      <div><span style={{ color: "#64748b" }}>Previous Leaks:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.previous_leak_count}</b></div>
-                      <div><span style={{ color: "#64748b" }}>Risk Level:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.risk_level}</b></div>
-                      <div><span style={{ color: "#64748b" }}>Recommendation:</span> <b style={{ color: "var(--text)" }}>{selectedPipeline.recommendation}</b></div>
+                    <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: "12px", padding: "16px" }}>
+                      <div style={{ fontSize: "14px", fontWeight: 800, marginBottom: "12px", color: "var(--text)" }}>
+                        Recommended Response
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", flexWrap: "wrap" }}>
+                          <div style={{ fontWeight: 800, color: "var(--text)" }}>
+                            {selectedPipeline.recommendation?.action || "No action available"}
+                          </div>
+                          <span className={`badge ${badgeClassForPriority(selectedPipeline.recommendation?.priority)}`}>
+                            {selectedPipeline.recommendation?.priority || "Low"}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: "13px", color: "#475569", lineHeight: 1.6 }}>
+                          {selectedPipeline.recommendation?.message || "No message available."}
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: "12px", fontWeight: 800, color: "#64748b", marginBottom: "6px" }}>
+                            Reasons
+                          </div>
+                          {Array.isArray(selectedPipeline.recommendation?.reasons) &&
+                          selectedPipeline.recommendation.reasons.length > 0 ? (
+                            <ul style={{ margin: "0 0 0 18px", padding: 0, color: "#0f172a" }}>
+                              {selectedPipeline.recommendation.reasons.map((reason, index) => (
+                                <li key={index} style={{ marginBottom: "6px", lineHeight: 1.5 }}>
+                                  {reason}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div style={{ fontSize: "13px", color: "#64748b" }}>
+                              No reasons available.
+                            </div>
+                          )}
+                        </div>
+
+                        <div>
+                          <Link
+                            to={`/pipelines/${selectedPipeline.pipeline_id}`}
+                            style={{
+                              textDecoration: "none",
+                              color: "#1d4ed8",
+                              fontWeight: 800,
+                              fontSize: "13px",
+                            }}
+                          >
+                            Open full pipeline details
+                          </Link>
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  </>
                 ) : null}
 
                 {selectedIncident.note ? (
                   <div style={{ background: "#fefce8", border: "1px solid #fef08a", borderRadius: "12px", padding: "16px" }}>
                     <div style={{ fontSize: "14px", fontWeight: 800, marginBottom: "4px", color: "#854d0e" }}>
-                      📒 Dispatcher Notes
+                      Dispatcher Notes
                     </div>
                     <div style={{ fontSize: "13px", color: "#713f12", fontStyle: "italic" }}>
                       "{selectedIncident.note}"
@@ -730,7 +1012,7 @@ export default function Alerts() {
                     }}
                     onClick={() => removeIncident(selectedIncident.incident_id)}
                   >
-                    🗑️ Retract Incident
+                    Retract Incident
                   </button>
                 </div>
               </div>
@@ -738,7 +1020,7 @@ export default function Alerts() {
           </div>
 
           <div className="card card-pad" style={{ background: "#f0fdf4", border: "1px dashed #6ee7b7" }}>
-            <div style={{ fontSize: "14px", fontWeight: 800, color: "#065f46" }}>💡 Action Matrix</div>
+            <div style={{ fontSize: "14px", fontWeight: 800, color: "#065f46" }}>Action Matrix</div>
             <div
               style={{
                 fontSize: "13px",
@@ -750,9 +1032,9 @@ export default function Alerts() {
                 gap: "6px",
               }}
             >
-              <div><b style={{ color: "#e11d48" }}>HIGH IMPACT</b> → Dispatch crisis crew + isolate grid section immediately.</div>
-              <div><b style={{ color: "#d97706" }}>MEDIUM IMPACT</b> → Schedule field repair within 24–48 hours.</div>
-              <div><b style={{ color: "#059669" }}>LOW IMPACT</b> → Monitor asset telemetry and plan preventive maintenance.</div>
+              <div><b style={{ color: "#e11d48" }}>HIGH IMPACT</b> → Dispatch crisis crew and inspect the pipeline immediately.</div>
+              <div><b style={{ color: "#d97706" }}>MEDIUM IMPACT</b> → Schedule field inspection within 24–48 hours.</div>
+              <div><b style={{ color: "#059669" }}>LOW IMPACT</b> → Continue routine monitoring and preventive maintenance.</div>
             </div>
           </div>
         </div>
@@ -767,6 +1049,8 @@ export default function Alerts() {
         @media (max-width: 900px) {
           .grid { grid-template-columns: 1fr !important; }
           .formGrid { grid-template-columns: 1fr !important; }
+          .alertsFilterGrid { grid-template-columns: 1fr !important; }
+          .assetGrid { grid-template-columns: 1fr !important; }
         }
       `}</style>
     </div>

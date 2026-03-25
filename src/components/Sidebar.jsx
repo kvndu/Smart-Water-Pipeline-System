@@ -1,20 +1,16 @@
 import { NavLink, useNavigate } from "react-router-dom";
 
-function NavItem({ to, iconSrc, label, badge, itemColor, activeColor }) {
+function NavItem({ to, iconSrc, label, badge }) {
   return (
     <NavLink
       to={to}
       className={({ isActive }) => `navItem ${isActive ? "active" : ""}`}
-      style={({ isActive }) => ({
-        color: isActive ? activeColor || "#ffffff" : itemColor || "#0f172a",
-      })}
     >
       <div className="navLeft">
         <span
           className="navIcon"
           style={{ "--icon-url": `url(${iconSrc})` }}
         ></span>
-
         <span className="navLabel">{label}</span>
       </div>
 
@@ -37,97 +33,90 @@ export default function Sidebar({ alertsCount = 0 }) {
       <div className="brand">
         <div className="brandIcon">💧</div>
         <div>
-          <div className="brandName">WaterFlow</div>
-          <div className="brandSub">Pipeline Monitoring System</div>
+          <div className="brandTitle">WaterFlow</div>
+          <div className="brandSub">
+            Clear, simple pipeline monitoring dashboard
+          </div>
         </div>
       </div>
 
-      <nav className="nav">
+      <div className="navSectionTitle">MAIN NAVIGATION</div>
+
+      <nav className="navMenu">
         <NavItem
           to="/dashboard"
-          iconSrc="/icons/home.svg"
-          label="Dashboard"
-          itemColor="#2563eb"
-          activeColor="#ffffff"
-        />
-
-        <NavItem
-          to="/system-hub"
-          iconSrc="/icons/decision.svg"
-          label="Decision Hub"
-          itemColor="#dc2626"
-          activeColor="#ffffff"
+          iconSrc="/icons/dashboard.svg"
+          label="Overview Dashboard"
         />
 
         <NavItem
           to="/pipelines"
-          iconSrc="/icons/pipelines.svg"
-          label="Pipelines"
-          itemColor="#16a34a"
-          activeColor="#ffffff"
+          iconSrc="/icons/pipeline.svg"
+          label="Pipeline Records"
         />
+
+        <NavItem
+          to="/alerts"
+          iconSrc="/icons/alerts.svg"
+          label="Alerts Center"
+          badge={alertsCount > 0 ? alertsCount : null}
+        />
+
+        <NavItem
+          to="/maintenance"
+          iconSrc="/icons/maintenance.svg"
+          label="Maintenance"
+        />
+
+        <NavItem
+          to="/risk-calculator"
+          iconSrc="/icons/analytics.svg"
+          label="Risk Calculator"
+        />
+
+        <NavItem
+          to="/map-view"
+          iconSrc="/icons/analytics.svg"
+          label="Map View"
+        />
+
+        <NavItem
+          to="/pipeline-network"
+          iconSrc="/icons/analytics.svg"
+          label="Pipeline Network"
+       />
+
+        <div className="navSectionTitle" style={{ marginTop: 18 }}>
+          ANALYSIS
+        </div>
 
         <NavItem
           to="/analytics"
           iconSrc="/icons/analytics.svg"
           label="Analytics"
-          itemColor="#7c3aed"
-          activeColor="#ffffff"
         />
 
         <NavItem
           to="/reports"
           iconSrc="/icons/reports.svg"
           label="Reports"
-          itemColor="#ea580c"
-          activeColor="#ffffff"
         />
 
         <NavItem
-          to="/alerts"
-          iconSrc="/icons/alerts.svg"
-          label="Alerts"
-          badge={alertsCount ? String(alertsCount) : null}
-          itemColor="#e11d48"
-          activeColor="#ffffff"
-        />
-
-        <NavItem
-          to="/maintenance"
-          iconSrc="/icons/maintenance.svg"
-          label="Maintenance & Operations"
-          itemColor="#0f766e"
-          activeColor="#ffffff"
+          to="/decision-hub"
+          iconSrc="/icons/decision.svg"
+          label="Decision Hub"
         />
       </nav>
 
       <div className="sidebarFooter">
-        <div className="small">
-          Status: <span className="statusDot"></span> System Online
-        </div>
-        <div className="small" style={{ marginTop: 6, marginBottom: 12 }}>
-          Dataset-based Monitoring
+        <div className="systemStatus">
+          <span className="statusDot"></span>
+          <span>Online</span>
         </div>
 
-        <button
-          onClick={handleLogout}
-          style={{
-            width: "100%",
-            padding: "8px",
-            background: "#fef2f2",
-            border: "1px solid #fecaca",
-            color: "#dc2626",
-            borderRadius: "8px",
-            fontWeight: 800,
-            cursor: "pointer",
-            fontSize: "12px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "6px",
-          }}
-        >
-          <span>🚪</span> Logout
+        <button className="logoutBtn" onClick={handleLogout}>
+          Logout
         </button>
       </div>
     </aside>
