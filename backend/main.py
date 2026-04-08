@@ -1,4 +1,8 @@
 from datetime import datetime
+import random
+import time
+from threading import Thread
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -151,8 +155,6 @@ def fetch_live_rain_mm() -> float:
         return 0.0
 
 
-# ------------------ GEOLOCATION ENGINE ------------------
-
 AREA_COORDS = {
     "Panadura Town": (6.7132, 79.9070),
     "Payagala Link": (6.5480, 79.9730),
@@ -170,7 +172,7 @@ AREA_COORDS = {
     "Millewa": (6.6610, 80.0730),
     "Yatadolawatta": (6.6890, 80.1040),
     "Moragahahena": (6.7170, 80.1000),
-    "Millaniya Link": (6.6700, 80.0300),
+    "Millaniya Link": (6.6610, 80.0320),
     "Thebuwana": (6.5980, 80.1150),
     "Wewita": (6.7230, 79.9900),
     "Moragalla": (6.4780, 79.9840),
@@ -179,7 +181,6 @@ AREA_COORDS = {
     "Pokunuwita": (6.7890, 80.0930),
     "Horana Town": (6.7159, 80.0626),
     "Bandaragama Town": (6.7150, 79.9870),
-    "Millaniya Link": (6.6610, 80.0320),
     "Nagoda": (6.5520, 79.9800),
     "Rajgama": (6.7040, 80.0100),
     "Agalawatta Town": (6.5400, 80.1550),
@@ -223,17 +224,18 @@ def assign_pipeline_coordinates(pipeline: dict) -> dict:
     pipeline_id = str(pipeline.get("pipeline_id", "") or "")
     material = str(pipeline.get("material_type", "") or "")
     length = max(safe_int(pipeline.get("pipe_length_m", 0), 0), 1)
-    install_year = safe_int(pipeline.get("install_year", datetime.now().year), datetime.now().year)
+    install_year = safe_int(
+        pipeline.get("install_year", datetime.now().year),
+        datetime.now().year,
+    )
 
     seed_core = f"{pipeline_id}-{material}-{length}-{install_year}"
 
-    # deterministic offsets around the area/division center
     lat_seed_1 = deterministic_unit(seed_core + "-lat1")
     lng_seed_1 = deterministic_unit(seed_core + "-lng1")
     lat_seed_2 = deterministic_unit(seed_core + "-lat2")
     lng_seed_2 = deterministic_unit(seed_core + "-lng2")
 
-    # smaller pipelines = smaller visible span, longer pipelines = slightly larger span
     span = min(max(length / 12000.0, 0.0035), 0.018)
 
     start_lat = base_lat + ((lat_seed_1 - 0.5) * span)
@@ -241,7 +243,6 @@ def assign_pipeline_coordinates(pipeline: dict) -> dict:
     end_lat = base_lat + ((lat_seed_2 - 0.5) * span)
     end_lng = base_lng + ((lng_seed_2 - 0.5) * span)
 
-    # avoid near-zero identical line segments
     if abs(start_lat - end_lat) < 0.0008 and abs(start_lng - end_lng) < 0.0008:
         end_lat += 0.0015
         end_lng -= 0.0012
@@ -295,6 +296,20 @@ def compute_future_metrics(pipeline: dict, base_score: float) -> dict:
     }
 
 
+def compute_forecast(pipeline: dict) -> dict:
+    base_score = safe_float(calculate_risk(pipeline), 0.0)
+    future_metrics = compute_future_metrics(pipeline, base_score)
+
+    return {
+        "risk_score": round(base_score, 3),
+        "risk_7_day": round(min(base_score + 0.02, 1.0), 3),
+        "risk_30_day": future_metrics["risk_30_day"],
+        "risk_90_day": future_metrics["risk_90_day"],
+        "trend": future_metrics["risk_trend"],
+        "estimated_life_months": future_metrics["estimated_life_months"],
+    }
+
+
 def compute_weakest_segment(pipeline: dict, base_score: float) -> dict:
     length = max(safe_int(pipeline.get("pipe_length_m", 0), 0), 1)
     leaks = safe_int(pipeline.get("previous_leak_count", 0), 0)
@@ -304,13 +319,18 @@ def compute_weakest_segment(pipeline: dict, base_score: float) -> dict:
         datetime.now().year,
     )
     material = str(pipeline.get("material_type", "") or "").strip().upper()
-    pressure_variation = str(pipeline.get("pressure_variation", "") or "").strip().lower()
+    pressure_variation = str(
+        pipeline.get("pressure_variation", "") or ""
+    ).strip().lower()
     rainfall = safe_float(pipeline.get("annual_rainfall_mm", 0), 0.0)
 
     segment_count = 5
     segment_length = max(length // segment_count, 1)
 
-    seed_text = f"{pipeline.get('pipeline_id', '')}-{install_year}-{material}-{leaks}-{repairs}-{length}"
+    seed_text = (
+        f"{pipeline.get('pipeline_id', '')}-{install_year}-{material}-"
+        f"{leaks}-{repairs}-{length}"
+    )
     seed_value = sum(ord(c) for c in seed_text)
 
     hotspot_index = seed_value % segment_count
@@ -344,7 +364,6 @@ def compute_weakest_segment(pipeline: dict, base_score: float) -> dict:
 
         distance_from_hotspot = abs(i - hotspot_index)
         hotspot_bonus = max(0.0, 0.12 - (distance_from_hotspot * 0.04))
-
         segment_variation = ((seed_value + i * 17) % 9) / 100.0
 
         segment_risk = min(
@@ -437,7 +456,133 @@ def save_derived_fields(pipeline_id: str, enriched: dict) -> None:
         "end_lng": enriched["end_lng"],
     }
 
-    supabase.table("pipelines").update(update_payload).eq("pipeline_id", pipeline_id).execute()
+    supabase.table("pipelines").update(update_payload).eq(
+        "pipeline_id", pipeline_id
+    ).execute()
+
+
+def generate_alert_from_pipeline(pipeline: dict):
+    risk_90 = safe_float(pipeline.get("risk_90_day", 0), 0.0)
+    leaks = safe_int(pipeline.get("previous_leak_count", 0), 0)
+    life_months = safe_int(pipeline.get("estimated_life_months", 24), 24)
+    maintenance_year = safe_int(
+        pipeline.get("last_maintenance_year", datetime.now().year),
+        datetime.now().year,
+    )
+    maintenance_gap = max(datetime.now().year - maintenance_year, 0)
+
+    if risk_90 >= 0.8:
+        return {
+            "pipeline_id": pipeline["pipeline_id"],
+            "alert_type": "HIGH_RISK_FORECAST",
+            "message": "High probability of failure within 90 days.",
+            "priority": "HIGH",
+            "status": "open",
+            "risk_score": round(risk_90, 3),
+        }
+
+    if leaks >= 2:
+        return {
+            "pipeline_id": pipeline["pipeline_id"],
+            "alert_type": "REPEATED_LEAKS",
+            "message": f"{leaks} leak incidents recorded.",
+            "priority": "MEDIUM",
+            "status": "open",
+            "risk_score": round(risk_90, 3),
+        }
+
+    if life_months <= 6:
+        return {
+            "pipeline_id": pipeline["pipeline_id"],
+            "alert_type": "LOW_SAFE_LIFE",
+            "message": f"Only {life_months} months safe life remaining.",
+            "priority": "MEDIUM",
+            "status": "open",
+            "risk_score": round(risk_90, 3),
+        }
+
+    if maintenance_gap >= 5:
+        return {
+            "pipeline_id": pipeline["pipeline_id"],
+            "alert_type": "MAINTENANCE_OVERDUE",
+            "message": f"No maintenance for {maintenance_gap} years.",
+            "priority": "MEDIUM",
+            "status": "open",
+            "risk_score": round(risk_90, 3),
+        }
+
+    return None
+
+
+def save_alert_if_needed(alert: dict):
+    existing = (
+        supabase.table("alerts")
+        .select("id")
+        .eq("pipeline_id", alert["pipeline_id"])
+        .eq("alert_type", alert["alert_type"])
+        .eq("status", "open")
+        .execute()
+    )
+
+    if existing.data:
+        return
+
+    supabase.table("alerts").insert(alert).execute()
+
+
+def clear_open_alerts_for_pipeline(pipeline_id: str):
+    supabase.table("alerts").update({"status": "resolved"}).eq(
+        "pipeline_id", pipeline_id
+    ).eq("status", "open").execute()
+
+
+def refresh_alert_for_pipeline(enriched: dict):
+    clear_open_alerts_for_pipeline(enriched["pipeline_id"])
+    alert = generate_alert_from_pipeline(enriched)
+    if alert:
+        save_alert_if_needed(alert)
+
+
+def simulate_live_data():
+    while True:
+        try:
+            response = supabase.table("pipelines").select("*").limit(20).execute()
+            pipelines = response.data or []
+            rain_mm = fetch_live_rain_mm()
+
+            for p in pipelines:
+                current_risk_30 = safe_float(p.get("risk_30_day", 0.3), 0.3)
+                current_risk_90 = safe_float(p.get("risk_90_day", 0.4), 0.4)
+
+                updated_risk_30 = max(
+                    0.0, min(1.0, current_risk_30 + random.uniform(-0.03, 0.05))
+                )
+                updated_risk_90 = max(
+                    0.0, min(1.0, current_risk_90 + random.uniform(-0.03, 0.05))
+                )
+
+                base_pipeline = {
+                    **p,
+                    "risk_30_day": round(updated_risk_30, 3),
+                    "risk_90_day": round(updated_risk_90, 3),
+                }
+
+                enriched = build_enriched_pipeline(base_pipeline, rain_mm=rain_mm)
+                save_derived_fields(p["pipeline_id"], enriched)
+                time.sleep(0.1)
+
+            time.sleep(15)
+
+        except Exception as e:
+            print("Simulation error:", e)
+            time.sleep(15)
+
+
+# TEMPORARY disable kara thiyenawa stability test karanna
+# @app.on_event("startup")
+# def start_background_simulation():
+#     thread = Thread(target=simulate_live_data, daemon=True)
+#     thread.start()
 
 
 @app.get("/")
@@ -465,11 +610,7 @@ def get_pipelines(limit: int = Query(default=100, ge=1, le=5000), persist: bool 
 @app.get("/pipelines/{pipeline_id}")
 def get_pipeline(pipeline_id: str, persist: bool = False):
     response = (
-        supabase
-        .table("pipelines")
-        .select("*")
-        .eq("pipeline_id", pipeline_id)
-        .execute()
+        supabase.table("pipelines").select("*").eq("pipeline_id", pipeline_id).execute()
     )
 
     if not response.data:
@@ -489,11 +630,9 @@ def create_pipeline(payload: PipelineCreate):
     data = normalize_pipeline_payload(payload)
 
     existing = (
-        supabase
-        .table("pipelines")
-        .select("pipeline_id")
-        .eq("pipeline_id", data["pipeline_id"])
-        .execute()
+        supabase.table("pipelines").select("pipeline_id").eq(
+            "pipeline_id", data["pipeline_id"]
+        ).execute()
     )
 
     if existing.data:
@@ -557,11 +696,7 @@ def get_live_rain():
 @app.get("/predict/{pipeline_id}")
 def predict_pipeline(pipeline_id: str, persist: bool = False):
     response = (
-        supabase
-        .table("pipelines")
-        .select("*")
-        .eq("pipeline_id", pipeline_id)
-        .execute()
+        supabase.table("pipelines").select("*").eq("pipeline_id", pipeline_id).execute()
     )
 
     if not response.data:
@@ -594,7 +729,10 @@ def predict_pipeline(pipeline_id: str, persist: bool = False):
 
 
 @app.get("/pipelines-with-risk")
-def get_pipelines_with_risk(limit: int = Query(default=100, ge=1, le=5000), persist: bool = False):
+def get_pipelines_with_risk(
+    limit: int = Query(default=100, ge=1, le=5000),
+    persist: bool = False
+):
     response = supabase.table("pipelines").select("*").limit(limit).execute()
     pipelines = response.data or []
 
@@ -611,28 +749,57 @@ def get_pipelines_with_risk(limit: int = Query(default=100, ge=1, le=5000), pers
 
 
 @app.post("/recalculate-all")
-def recalculate_all(limit: int = Query(default=5000, ge=1, le=50000)):
-    response = supabase.table("pipelines").select("*").limit(limit).execute()
-    pipelines = response.data or []
+def recalculate_all(limit: int = Query(default=100, ge=1, le=5000)):
+    try:
+        res = supabase.table("pipelines").select("*").limit(limit).execute()
+        rows = res.data or []
 
-    if not pipelines:
+        updated = 0
+        errors = []
+        rain_mm = fetch_live_rain_mm()
+
+        for r in rows:
+            try:
+                enriched = build_enriched_pipeline(r, rain_mm=rain_mm)
+                save_derived_fields(r["pipeline_id"], enriched)
+                updated += 1
+                time.sleep(0.1)
+
+            except Exception as e:
+                print(f"Error processing pipeline {r.get('pipeline_id')}: {e}")
+                errors.append({
+                    "pipeline_id": r.get("pipeline_id"),
+                    "error": str(e)
+                })
+
         return {
-            "message": "No pipelines found",
-            "updated_count": 0,
+            "message": "Recalculation completed",
+            "updated": updated,
+            "errors": errors
         }
 
-    rain_mm = fetch_live_rain_mm()
-    updated_count = 0
+    except Exception as e:
+        print("FATAL ERROR:", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
-    for pipeline in pipelines:
-        enriched = build_enriched_pipeline(pipeline, rain_mm=rain_mm)
-        save_derived_fields(pipeline["pipeline_id"], enriched)
-        updated_count += 1
 
-    return {
-        "message": "All pipelines recalculated successfully",
-        "updated_count": updated_count,
-    }
+@app.get("/alerts")
+def get_alerts():
+    response = (
+        supabase.table("alerts")
+        .select("*")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return response.data or []
+
+
+@app.post("/alerts/{alert_id}/resolve")
+def resolve_alert(alert_id: str):
+    supabase.table("alerts").update({"status": "resolved"}).eq(
+        "id", alert_id
+    ).execute()
+    return {"message": "Alert resolved"}
 
 
 @app.get("/recommendation")
