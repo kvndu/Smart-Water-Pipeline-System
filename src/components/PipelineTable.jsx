@@ -1,10 +1,12 @@
+import { Link } from "react-router-dom";
+
 function riskBadge(risk) {
   if (risk === "High") return "badge danger";
   if (risk === "Medium") return "badge warn";
   return "badge ok";
 }
 
-export default function PipelineTable({ rows = [], onSelect, selectedId }) {
+export default function PipelineTable({ rows = [], selectedId }) {
   return (
     <div className="card card-pad">
       <div className="sectionHeader">
@@ -44,9 +46,9 @@ export default function PipelineTable({ rows = [], onSelect, selectedId }) {
                 <td>{p.leak_count ?? 0}</td>
                 <td>{p.last_maintenance_date || "Not recorded"}</td>
                 <td>
-                  <button className="btn btnSecondary" style={{ padding: "8px 12px" }} onClick={() => onSelect?.(p)}>
+                  <Link className="btn btnSecondary" style={{ padding: "8px 12px" }} to={`/pipelines/${p.pipeline_id}`}>
                     View
-                  </button>
+                  </Link>
                 </td>
               </tr>
             ))}

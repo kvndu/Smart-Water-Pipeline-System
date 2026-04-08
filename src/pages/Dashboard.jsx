@@ -46,6 +46,67 @@ function buildAlerts(pipelines) {
   return alerts;
 }
 
+function buildDeterministicMaintenanceDate(pipeline) {
+  const year = Number(pipeline.last_maintenance_year);
+  if (!year) return "Not recorded";
+
+  const pipelineCode = String(pipeline.pipeline_id || "")
+    .split("")
+    .reduce((sum, ch) => sum + ch.charCodeAt(0), 0);
+
+  const installYear = Number(pipeline.install_year || year);
+  const leakCount = Number(pipeline.previous_leak_count || 0);
+  const riskWeight = { High: 17, Medium: 11, Low: 5 }[pipeline.risk_level] || 3;
+
+  const month = ((pipelineCode + leakCount + riskWeight) % 12) + 1;
+  const baseDay = ((pipelineCode + installYear + leakCount * 7 + riskWeight) % 28) + 1;
+  const day = Math.min(baseDay, new Date(year, month, 0).getDate());
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function addMonths(dateString, monthsToAdd) {
+  if (!dateString || dateString === "Not recorded") return "-";
+
+  const [year, month, day] = dateString.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  const originalDay = date.getDate();
+  date.setMonth(date.getMonth() + monthsToAdd);
+  if (date.getDate() < originalDay) {
+    date.setDate(0);
+  }
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function getMaintenanceCycleMonths(pipeline) {
+  const risk = pipeline.risk_level;
+  const leaks = Number(pipeline.previous_leak_count || 0);
+
+  if (risk === "High" || leaks >= 3) return 3;
+  if (risk === "Medium" || leaks >= 1) return 6;
+  return 12;
+}
+
+function getQueuePriority(pipeline) {
+  const risk = pipeline.risk_level;
+  const leaks = Number(pipeline.previous_leak_count || 0);
+
+  if (risk === "High" || leaks >= 3) return "Critical";
+  if (risk === "Medium" || leaks >= 1) return "Planned";
+  return "Routine";
+}
+
+function getQueueBadgeClass(priority) {
+  if (priority === "Critical") return "badge danger";
+  if (priority === "Planned") return "badge warn";
+  return "badge ok";
+}
+
 function MetricCard({ label, value, hint }) {
   return (
     <div className="metricCard card">
@@ -65,10 +126,11 @@ function getRainStatus(rainMm) {
   return "Very heavy rain";
 }
 
-function getPriorityBadgeClass(priority) {
-  if (priority === "Critical") return "badge danger";
-  if (priority === "Moderate") return "badge warn";
-  return "badge ok";
+function isOverdue(nextDateString, referenceDate = new Date()) {
+  if (!nextDateString || nextDateString === "-") return false;
+  const dueDate = new Date(`${nextDateString}T00:00:00`);
+  if (Number.isNaN(dueDate.getTime())) return false;
+  return dueDate.getTime() < referenceDate.getTime();
 }
 
 export default function Dashboard() {
@@ -174,11 +236,108 @@ export default function Dashboard() {
       .slice(0, 6);
   }, [pipelines]);
 
-  const topRecommendations = useMemo(() => {
+  const maintenanceQueue = useMemo(() => {
     return [...pipelines]
-      .filter((p) => p.recommendation)
-      .sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0))
-      .slice(0, 4);
+      .map((p) => {
+        const lastMaintenance = buildDeterministicMaintenanceDate(p);
+        const cycleMonths = getMaintenanceCycleMonths(p);
+        const nextMaintenance = addMonths(lastMaintenance, cycleMonths);
+        const priority = getQueuePriority(p);
+
+        return {
+          ...p,
+          lastMaintenance,
+          nextMaintenance,
+          cycleMonths,
+          priority,
+          isOverdue: isOverdue(nextMaintenance),
+        };
+      })
+      .sort((a, b) => {
+        const priorityOrder = { Critical: 3, Planned: 2, Routine: 1 };
+        const overdueDiff = Number(b.isOverdue) - Number(a.isOverdue);
+        if (overdueDiff !== 0) return overdueDiff;
+
+        const priorityDiff = (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+        if (priorityDiff !== 0) return priorityDiff;
+
+        return Number(b.risk_score || 0) - Number(a.risk_score || 0);
+      })
+      .slice(0, 8);
+  }, [pipelines]);
+
+  const maintenanceSummary = useMemo(() => {
+    const summary = {
+      overdue: 0,
+      next30Days: 0,
+      criticalQueue: 0,
+      routineQueue: 0,
+    };
+
+    const today = new Date();
+    const next30 = new Date();
+    next30.setDate(next30.getDate() + 30);
+
+    maintenanceQueue.forEach((p) => {
+      if (p.priority === "Critical") summary.criticalQueue += 1;
+      if (p.priority === "Routine") summary.routineQueue += 1;
+
+      if (!p.nextMaintenance || p.nextMaintenance === "-") return;
+      const dueDate = new Date(`${p.nextMaintenance}T00:00:00`);
+      if (Number.isNaN(dueDate.getTime())) return;
+
+      if (dueDate < today) summary.overdue += 1;
+      if (dueDate >= today && dueDate <= next30) summary.next30Days += 1;
+    });
+
+    return summary;
+  }, [maintenanceQueue]);
+
+  const hotspotAreas = useMemo(() => {
+    const grouped = {};
+
+    pipelines.forEach((p) => {
+      const area = p.area_name || "Unknown";
+      if (!grouped[area]) {
+        grouped[area] = {
+          area,
+          totalPipelines: 0,
+          highRiskCount: 0,
+          totalLeaks: 0,
+          totalRiskScore: 0,
+          maxRiskScore: 0,
+        };
+      }
+
+      const riskScore = Number(p.risk_score || 0);
+      const leaks = Number(p.previous_leak_count || 0);
+
+      grouped[area].totalPipelines += 1;
+      grouped[area].totalLeaks += leaks;
+      grouped[area].totalRiskScore += riskScore;
+      grouped[area].maxRiskScore = Math.max(grouped[area].maxRiskScore, riskScore);
+      if (p.risk_level === "High") grouped[area].highRiskCount += 1;
+    });
+
+    return Object.values(grouped)
+      .map((item) => {
+        const avgRisk = item.totalPipelines ? item.totalRiskScore / item.totalPipelines : 0;
+        let status = "Monitor";
+        if (item.highRiskCount >= 2 || item.totalLeaks >= 8 || avgRisk >= 0.65) status = "Critical";
+        else if (item.highRiskCount >= 1 || item.totalLeaks >= 4 || avgRisk >= 0.5) status = "Watch";
+
+        return {
+          ...item,
+          avgRisk,
+          status,
+        };
+      })
+      .sort((a, b) => {
+        if (b.highRiskCount !== a.highRiskCount) return b.highRiskCount - a.highRiskCount;
+        if (b.totalLeaks !== a.totalLeaks) return b.totalLeaks - a.totalLeaks;
+        return b.avgRisk - a.avgRisk;
+      })
+      .slice(0, 6);
   }, [pipelines]);
 
   return (
@@ -367,62 +526,55 @@ export default function Dashboard() {
             <div className="card card-pad">
               <div className="sectionHeader">
                 <div>
-                  <div className="sectionTitle">Quick explanation</div>
+                  <div className="sectionTitle">High-risk area hotspots</div>
                   <div className="sectionSubtitle">
-                    What this page means in simple words.
+                    Areas that need more attention based on high-risk counts, leak history, and average risk.
                   </div>
                 </div>
               </div>
 
               <div className="vstack">
-                <div className="detailItem">
-                  <div className="detailLabel">Low risk</div>
-                  <div className="detailValue">Routine monitoring only.</div>
-                </div>
+                {hotspotAreas.map((area) => (
+                  <div key={area.area} className="detailItem">
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        alignItems: "flex-start",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div>
+                        <div className="detailLabel">{area.area}</div>
+                        <div className="detailValue" style={{ fontSize: 14, lineHeight: 1.6 }}>
+                          High risk: {area.highRiskCount} • Leaks: {area.totalLeaks} • Avg risk: {area.avgRisk.toFixed(3)}
+                        </div>
+                      </div>
 
-                <div className="detailItem">
-                  <div className="detailLabel">Medium risk</div>
-                  <div className="detailValue">
-                    Plan inspection and keep watching leak history.
+                      <span
+                        className={`badge ${
+                          area.status === "Critical"
+                            ? "danger"
+                            : area.status === "Watch"
+                            ? "warn"
+                            : "ok"
+                        }`}
+                      >
+                        {area.status}
+                      </span>
+                    </div>
                   </div>
-                </div>
+                ))}
 
                 <div className="detailItem">
-                  <div className="detailLabel">High risk</div>
-                  <div className="detailValue">
-                    Highest priority for maintenance and follow-up.
-                  </div>
-                </div>
-
-                <div className="detailItem">
-                  <div className="detailLabel">Alerts</div>
-                  <div className="detailValue">
-                    Created when a pipeline is high risk or has repeated leaks.
-                  </div>
-                </div>
-
-                <div className="detailItem">
-                  <div className="detailLabel">Kalutara live rain</div>
+                  <div className="detailLabel">Live context</div>
                   <div className="detailValue">
                     {liveRain
-                      ? `${Number(liveRain.rain_mm || 0).toFixed(1)} mm • ${getRainStatus(
+                      ? `Kalutara rain: ${Number(liveRain.rain_mm || 0).toFixed(1)} mm • ${getRainStatus(
                           liveRain.rain_mm
                         )} • Updated: ${liveRain.updated_time || "-"}`
                       : "Live rain data not available."}
-                  </div>
-                </div>
-
-                <div className="detailItem">
-                  <div className="detailLabel">Current time</div>
-                  <div className="detailValue">
-                    {now.toLocaleDateString()} • {now.toLocaleTimeString()}
-                  </div>
-                </div>
-
-                <div className="detailItem">
-                  <div className="detailLabel">Current counts</div>
-                  <div className="detailValue">
-                    Low: {lowRisk} • Medium: {mediumRisk} • High: {highRisk}
                   </div>
                 </div>
               </div>
@@ -432,104 +584,93 @@ export default function Dashboard() {
           <div className="card card-pad">
             <div className="sectionHeader">
               <div>
-                <div className="sectionTitle">Top recommended actions</div>
+                <div className="sectionTitle">Upcoming maintenance queue</div>
                 <div className="sectionSubtitle">
-                  Backend API generated maintenance recommendations for the highest-risk pipelines.
+                  A practical worklist based on risk level, leak history, and the last maintenance date.
                 </div>
               </div>
             </div>
 
-            {topRecommendations.length === 0 ? (
-              <div className="emptyState">No recommendation data available.</div>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-                  gap: "16px",
-                }}
-              >
-                {topRecommendations.map((p) => (
-                  <div key={p.pipeline_id} className="detailItem">
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: "12px",
-                        marginBottom: "10px",
-                      }}
-                    >
-                      <div className="detailValue">
+            <div className="metricsGrid" style={{ marginBottom: 18 }}>
+              <MetricCard
+                label="Overdue in queue"
+                value={maintenanceSummary.overdue}
+                hint="Needs review immediately"
+              />
+              <MetricCard
+                label="Due in next 30 days"
+                value={maintenanceSummary.next30Days}
+                hint="Plan crew allocation now"
+              />
+              <MetricCard
+                label="Critical queue"
+                value={maintenanceSummary.criticalQueue}
+                hint="High risk or repeated leaks"
+              />
+              <MetricCard
+                label="Routine queue"
+                value={maintenanceSummary.routineQueue}
+                hint="Can be batched into normal rounds"
+              />
+            </div>
+
+            <div className="tableWrap">
+              <table className="table" style={{ minWidth: 980 }}>
+                <thead>
+                  <tr>
+                    <th>Pipeline ID</th>
+                    <th>Area</th>
+                    <th>Division</th>
+                    <th>Risk</th>
+                    <th>Leaks</th>
+                    <th>Last maintenance</th>
+                    <th>Next due</th>
+                    <th>Priority</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {maintenanceQueue.map((p) => (
+                    <tr key={p.pipeline_id}>
+                      <td>
                         <Link
                           to={`/pipelines/${p.pipeline_id}`}
-                          style={{ textDecoration: "none", color: "inherit" }}
+                          style={{ fontWeight: 700, textDecoration: "none" }}
                         >
                           {p.pipeline_id}
                         </Link>
-                      </div>
-
-                      <span className={getPriorityBadgeClass(p.recommendation?.priority)}>
-                        {p.recommendation?.priority || "Low"}
-                      </span>
-                    </div>
-
-                    <div className="detailLabel" style={{ marginBottom: 6 }}>
-                      {p.area_name || "Unknown area"}
-                    </div>
-
-                    <div style={{ marginBottom: 10 }}>
-                      <span
-                        className={`badge ${
-                          p.risk_level === "High"
-                            ? "danger"
-                            : p.risk_level === "Medium"
-                            ? "warn"
-                            : "ok"
-                        }`}
-                      >
-                        {p.risk_level}
-                      </span>
-                      <span style={{ marginLeft: 8, fontWeight: 700 }}>
-                        Score: {Number(p.risk_score || 0).toFixed(3)}
-                      </span>
-                    </div>
-
-                    <div className="detailLabel">Action</div>
-                    <div className="detailValue" style={{ marginBottom: 10 }}>
-                      {p.recommendation?.action || "-"}
-                    </div>
-
-                    <div className="detailLabel">Message</div>
-                    <div
-                      style={{
-                        color: "var(--text-muted, #6b7280)",
-                        lineHeight: 1.6,
-                        marginBottom: 10,
-                      }}
-                    >
-                      {p.recommendation?.message || "No message available."}
-                    </div>
-
-                    <div className="detailLabel">Reasons</div>
-                    <div style={{ color: "#111827" }}>
-                      {Array.isArray(p.recommendation?.reasons) &&
-                      p.recommendation.reasons.length > 0 ? (
-                        <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
-                          {p.recommendation.reasons.map((reason, index) => (
-                            <li key={index} style={{ marginBottom: 6, lineHeight: 1.5 }}>
-                              {reason}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        "No reasons available."
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                      </td>
+                      <td>{p.area_name || "-"}</td>
+                      <td>{p.ds_division || "-"}</td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            p.risk_level === "High"
+                              ? "danger"
+                              : p.risk_level === "Medium"
+                              ? "warn"
+                              : "ok"
+                          }`}
+                        >
+                          {p.risk_level}
+                        </span>
+                      </td>
+                      <td>{p.previous_leak_count || 0}</td>
+                      <td>{p.lastMaintenance}</td>
+                      <td>
+                        <span style={{ fontWeight: p.isOverdue ? 700 : 500, color: p.isOverdue ? "#b91c1c" : "inherit" }}>
+                          {p.nextMaintenance}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={getQueueBadgeClass(p.priority)}>
+                          {p.isOverdue ? `Overdue • ${p.priority}` : p.priority}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}

@@ -1,267 +1,809 @@
 import { useEffect, useMemo, useState } from "react";
-import PipelineTable from "../components/PipelineTable.jsx";
-import AlertPanel from "../components/AlertPanel.jsx";
-import { exportToCSV } from "../utils/exportUtils.js";
-import api from "../utils/api.js";
-import { Link } from "react-router-dom";
 
-function buildAlerts(pipelines) {
-  const alerts = [];
+const API_BASE = "http://127.0.0.1:8000";
 
-  pipelines.forEach((p) => {
-    const leaks = Number(p.previous_leak_count || 0);
-    const risk = (p.risk_level || "").toLowerCase();
-
-    if (leaks >= 2) {
-      alerts.push({
-        id: `AL-${p.pipeline_id}-L`,
-        title: "Repeated leak reports",
-        severity: "High",
-        pipeline_id: p.pipeline_id,
-        area: p.area_name,
-        time: "This week",
-      });
-    } else if (leaks === 1) {
-      alerts.push({
-        id: `AL-${p.pipeline_id}-L`,
-        title: "Leak reported",
-        severity: "Medium",
-        pipeline_id: p.pipeline_id,
-        area: p.area_name,
-        time: "Today",
-      });
-    }
-
-    if (risk === "high") {
-      alerts.push({
-        id: `AL-${p.pipeline_id}-R`,
-        title: "High risk pipeline",
-        severity: leaks > 0 ? "High" : "Medium",
-        pipeline_id: p.pipeline_id,
-        area: p.area_name,
-        time: "Now",
-      });
-    }
-  });
-
-  return alerts;
+function getRiskBadgeClass(level) {
+  if (level === "High") return "risk-chip high";
+  if (level === "Medium") return "risk-chip medium";
+  return "risk-chip low";
 }
 
-function SummaryCard({ label, value, hint }) {
+function getTrendBadgeClass(trend) {
+  if (trend === "Increasing") return "trend-chip increasing";
+  if (trend === "Decreasing") return "trend-chip decreasing";
+  return "trend-chip stable";
+}
+
+function getFailureClass(value) {
+  if (value >= 80) return "failure-chip danger";
+  if (value >= 50) return "failure-chip warning";
+  return "failure-chip safe";
+}
+
+function formatNumber(value, fallback = "-") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return value;
+}
+
+function SegmentBar({ pipeline }) {
+  const length = Number(pipeline?.pipe_length_m || 0);
+  const start = Number(pipeline?.weakest_segment_start_m || 0);
+  const end = Number(pipeline?.weakest_segment_end_m || 0);
+
+  if (!length || end <= start) {
+    return <div className="segment-empty">No segment data</div>;
+  }
+
+  const leftPercent = (start / length) * 100;
+  const widthPercent = ((end - start) / length) * 100;
+
   return (
-    <div className="metricCard card">
-      <div className="metricLabel">{label}</div>
-      <div className="metricValue">{value}</div>
-      <div className="metricHint">{hint}</div>
+    <div className="segment-wrap">
+      <div className="segment-track">
+        <div
+          className="segment-danger"
+          style={{
+            left: `${leftPercent}%`,
+            width: `${Math.max(widthPercent, 8)}%`,
+          }}
+        />
+      </div>
+      <div className="segment-labels">
+        <span>0m</span>
+        <span>{length}m</span>
+      </div>
+    </div>
+  );
+}
+
+function PipelineDetailsDrawer({ pipeline, onClose }) {
+  if (!pipeline) return null;
+
+  return (
+    <div className="details-overlay" onClick={onClose}>
+      <div className="details-drawer" onClick={(e) => e.stopPropagation()}>
+        <div className="drawer-header">
+          <div>
+            <p className="drawer-kicker">Pipeline intelligence</p>
+            <h2>{pipeline.pipeline_id}</h2>
+            <p className="drawer-subtitle">
+              {pipeline.area_name} • {pipeline.ds_division}
+            </p>
+          </div>
+          <button className="drawer-close" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+
+        <div className="details-grid">
+          <div className="info-card">
+            <p className="card-label">Risk level</p>
+            <div className={getRiskBadgeClass(pipeline.risk_level)}>
+              {pipeline.risk_level || "Low"}
+            </div>
+          </div>
+
+          <div className="info-card">
+            <p className="card-label">Failure probability</p>
+            <div className={getFailureClass(pipeline.failure_probability)}>
+              {formatNumber(pipeline.failure_probability, 0)}%
+            </div>
+          </div>
+
+          <div className="info-card">
+            <p className="card-label">Risk trend</p>
+            <div className={getTrendBadgeClass(pipeline.risk_trend)}>
+              {pipeline.risk_trend || "Stable"}
+            </div>
+          </div>
+
+          <div className="info-card">
+            <p className="card-label">Estimated safe life</p>
+            <h3>{formatNumber(pipeline.estimated_life_months, 0)} months</h3>
+          </div>
+        </div>
+
+        <div className="drawer-section">
+          <h3>Forecast insight</h3>
+          <div className="details-grid">
+            <div className="info-card">
+              <p className="card-label">Current risk score</p>
+              <h3>{formatNumber(pipeline.risk_score)}</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Next 30 days</p>
+              <h3>{formatNumber(pipeline.risk_30_day)}</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Next 90 days</p>
+              <h3>{formatNumber(pipeline.risk_90_day)}</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Weakest segment risk</p>
+              <h3>{formatNumber(pipeline.weakest_segment_risk)}</h3>
+            </div>
+          </div>
+        </div>
+
+        <div className="drawer-section">
+          <h3>Probable failure zone</h3>
+          <div className="zone-card">
+            <p className="zone-text">
+              {formatNumber(pipeline.weakest_segment_start_m, 0)}m →{" "}
+              {formatNumber(pipeline.weakest_segment_end_m, 0)}m
+            </p>
+            <p className="zone-subtext">
+              This is the most vulnerable segment predicted by the backend risk engine.
+            </p>
+            <SegmentBar pipeline={pipeline} />
+          </div>
+        </div>
+
+        <div className="drawer-section">
+          <h3>Technical details</h3>
+          <div className="details-grid">
+            <div className="info-card">
+              <p className="card-label">Material</p>
+              <h3>{pipeline.material_type}</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Diameter</p>
+              <h3>{pipeline.diameter_mm} mm</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Length</p>
+              <h3>{pipeline.pipe_length_m} m</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Install year</p>
+              <h3>{pipeline.install_year}</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Previous leaks</p>
+              <h3>{pipeline.previous_leak_count}</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Previous repairs</p>
+              <h3>{pipeline.previous_repair_count}</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Last maintenance</p>
+              <h3>{pipeline.last_maintenance_year}</h3>
+            </div>
+            <div className="info-card">
+              <p className="card-label">Annual rainfall</p>
+              <h3>{pipeline.annual_rainfall_mm} mm</h3>
+            </div>
+          </div>
+        </div>
+
+        <div className="drawer-section">
+          <h3>Recommendation</h3>
+          <div className="recommend-card">
+            <p>
+              <strong>Action:</strong>{" "}
+              {pipeline.recommendation?.action || "Routine monitoring"}
+            </p>
+            <p>
+              <strong>Priority:</strong>{" "}
+              {pipeline.recommendation?.priority || "Low"}
+            </p>
+            <p>
+              <strong>Message:</strong>{" "}
+              {pipeline.recommendation?.message || "No recommendation"}
+            </p>
+            <div className="reasons-list">
+              {(pipeline.recommendation?.reasons || []).map((reason, idx) => (
+                <span key={idx} className="reason-pill">
+                  {reason}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
 export default function Pipelines() {
   const [pipelines, setPipelines] = useState([]);
-  const [selected, setSelected] = useState(null);
+  const [search, setSearch] = useState("");
+  const [riskFilter, setRiskFilter] = useState("All");
+  const [sortBy, setSortBy] = useState("default");
+  const [selectedPipeline, setSelectedPipeline] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [q, setQ] = useState("");
-  const [division, setDivision] = useState("All");
-  const [risk, setRisk] = useState("All");
-  const [material, setMaterial] = useState("All");
-  const [highOnly, setHighOnly] = useState(false);
-  const [sortBy, setSortBy] = useState("");
 
-  useEffect(() => {
-    async function fetchPipelines() {
-      try {
-        setLoading(true);
-        const res = await api.get("/pipelines-with-risk?limit=100");
-        setPipelines(Array.isArray(res.data) ? res.data : []);
-      } catch (err) {
-        console.error(err);
-        setPipelines([]);
-      } finally {
-        setLoading(false);
-      }
+  async function loadPipelines() {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API_BASE}/pipelines-with-risk?limit=1000`);
+      const data = await res.json();
+      setPipelines(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error("Failed to fetch pipelines:", error);
+      setPipelines([]);
+    } finally {
+      setLoading(false);
     }
-    fetchPipelines();
-  }, []);
-
-  const alerts = useMemo(() => buildAlerts(pipelines), [pipelines]);
-
-  const divisions = useMemo(
-    () => ["All", ...Array.from(new Set(pipelines.map((p) => p.ds_division).filter(Boolean)))],
-    [pipelines]
-  );
-
-  const materials = useMemo(
-    () => ["All", ...Array.from(new Set(pipelines.map((p) => p.material_type).filter(Boolean)))],
-    [pipelines]
-  );
-
-  const filtered = useMemo(() => {
-    return pipelines.filter((p) => {
-      const text = `${p.pipeline_id} ${p.area_name} ${p.ds_division} ${p.material_type}`.toLowerCase();
-      const matchesQ = q.trim() === "" || text.includes(q.toLowerCase());
-      const matchesDivision = division === "All" || p.ds_division === division;
-      const matchesRisk = risk === "All" || p.risk_level === risk;
-      const matchesMaterial = material === "All" || p.material_type === material;
-      const matchesHighOnly = !highOnly || p.risk_level === "High";
-      return matchesQ && matchesDivision && matchesRisk && matchesMaterial && matchesHighOnly;
-    });
-  }, [pipelines, q, division, risk, material, highOnly]);
-
-  const sorted = useMemo(() => {
-    const data = [...filtered];
-    if (sortBy === "risk") {
-      const order = { High: 3, Medium: 2, Low: 1 };
-      data.sort((a, b) => (order[b.risk_level] || 0) - (order[a.risk_level] || 0));
-    }
-    if (sortBy === "leaks") {
-      data.sort((a, b) => Number(b.previous_leak_count || 0) - Number(a.previous_leak_count || 0));
-    }
-    if (sortBy === "score") {
-      data.sort((a, b) => Number(b.risk_score || 0) - Number(a.risk_score || 0));
-    }
-    return data;
-  }, [filtered, sortBy]);
-
-  const tableRows = useMemo(() => {
-    return sorted.map((p) => ({
-      ...p,
-      pipe_name: p.pipeline_id,
-      area: p.area_name,
-      zone: p.ds_division,
-      material: p.material_type,
-      corrosion_risk: p.risk_level,
-      leak_count: p.previous_leak_count,
-      length_m: p.pipe_length_m,
-      last_maintenance_date: p.last_maintenance_year ? `${p.last_maintenance_year}-01-01` : "",
-    }));
-  }, [sorted]);
-
-  const stats = {
-    total: pipelines.length,
-    filtered: sorted.length,
-    high: sorted.filter((p) => p.risk_level === "High").length,
-    medium: sorted.filter((p) => p.risk_level === "Medium").length,
-  };
-
-  const selectedDetails = selected || tableRows[0] || null;
-
-  function clearFilters() {
-    setQ("");
-    setDivision("All");
-    setRisk("All");
-    setMaterial("All");
-    setHighOnly(false);
-    setSortBy("");
   }
 
+  useEffect(() => {
+    loadPipelines();
+  }, []);
+
+  const filteredPipelines = useMemo(() => {
+    let list = [...pipelines];
+
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter((p) =>
+        [
+          p.pipeline_id,
+          p.area_name,
+          p.ds_division,
+          p.material_type,
+          p.risk_level,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(q)
+      );
+    }
+
+    if (riskFilter !== "All") {
+      list = list.filter((p) => p.risk_level === riskFilter);
+    }
+
+    if (sortBy === "failure_desc") {
+      list.sort((a, b) => (b.failure_probability || 0) - (a.failure_probability || 0));
+    } else if (sortBy === "risk_desc") {
+      list.sort((a, b) => (b.risk_score || 0) - (a.risk_score || 0));
+    } else if (sortBy === "life_asc") {
+      list.sort((a, b) => (a.estimated_life_months || 0) - (b.estimated_life_months || 0));
+    } else if (sortBy === "leaks_desc") {
+      list.sort((a, b) => (b.previous_leak_count || 0) - (a.previous_leak_count || 0));
+    }
+
+    return list;
+  }, [pipelines, search, riskFilter, sortBy]);
+
+  const topStats = useMemo(() => {
+    const high = filteredPipelines.filter((p) => p.risk_level === "High").length;
+    const medium = filteredPipelines.filter((p) => p.risk_level === "Medium").length;
+    const avgFailure = filteredPipelines.length
+      ? Math.round(
+          filteredPipelines.reduce((sum, p) => sum + (p.failure_probability || 0), 0) /
+            filteredPipelines.length
+        )
+      : 0;
+
+    return {
+      total: filteredPipelines.length,
+      high,
+      medium,
+      avgFailure,
+    };
+  }, [filteredPipelines]);
+
   return (
-    <div className="container" style={{ animation: "fadeIn 0.35s ease" }}>
-      <div className="pageHero pageHeroCompact">
-        <div>
-          <div className="heroEyebrow">Pipeline Records</div>
-          <div className="pageTitle">Pipelines page</div>
-          <div className="pageSubtitle">
-            Search pipelines, filter by area or material, and clearly see why a record needs attention.
-          </div>
+    <div className="page-shell">
+      <style>{`
+        .page-shell {
+          padding: 24px;
+          background: #eef5fb;
+          min-height: 100vh;
+        }
+
+        .page-top-grid {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 16px;
+          margin-bottom: 18px;
+        }
+
+        .top-card, .panel, .info-card, .zone-card, .recommend-card {
+          background: #ffffff;
+          border: 1px solid #dce7f3;
+          border-radius: 18px;
+          box-shadow: 0 8px 24px rgba(21, 63, 117, 0.06);
+        }
+
+        .top-card {
+          padding: 18px 18px;
+        }
+
+        .top-card p {
+          margin: 0 0 8px;
+          color: #6b7b93;
+          font-size: 14px;
+        }
+
+        .top-card h2 {
+          margin: 0;
+          font-size: 36px;
+          color: #10233f;
+        }
+
+        .panel {
+          padding: 20px;
+          margin-bottom: 18px;
+        }
+
+        .panel-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+
+        .panel-header h2 {
+          margin: 0;
+          font-size: 28px;
+          color: #10233f;
+        }
+
+        .panel-subtitle {
+          margin: 6px 0 0;
+          color: #70809b;
+          font-size: 14px;
+        }
+
+        .filters {
+          display: grid;
+          grid-template-columns: 2fr 1fr 1fr;
+          gap: 12px;
+          margin-top: 14px;
+        }
+
+        .input, .select {
+          height: 48px;
+          border-radius: 14px;
+          border: 1px solid #cdd9e8;
+          padding: 0 14px;
+          font-size: 15px;
+          outline: none;
+          background: #fff;
+        }
+
+        .table-wrap {
+          overflow: auto;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 1200px;
+        }
+
+        thead th {
+          text-align: left;
+          font-size: 13px;
+          color: #5a6b85;
+          padding: 16px 14px;
+          border-bottom: 1px solid #e3edf7;
+          white-space: nowrap;
+        }
+
+        tbody td {
+          padding: 16px 14px;
+          border-bottom: 1px solid #edf3f9;
+          color: #10233f;
+          font-size: 14px;
+          vertical-align: middle;
+        }
+
+        tbody tr:hover {
+          background: #f8fbff;
+        }
+
+        .pipeline-id {
+          font-weight: 700;
+        }
+
+        .risk-chip, .trend-chip, .failure-chip, .reason-pill {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 999px;
+          font-weight: 700;
+        }
+
+        .risk-chip, .trend-chip, .failure-chip {
+          padding: 8px 14px;
+          font-size: 13px;
+        }
+
+        .risk-chip.low {
+          background: #daf5e7;
+          color: #167a4a;
+        }
+
+        .risk-chip.medium {
+          background: #fff2cf;
+          color: #a96a00;
+        }
+
+        .risk-chip.high {
+          background: #ffe0e0;
+          color: #b42318;
+        }
+
+        .trend-chip.increasing {
+          background: #ffe0e0;
+          color: #b42318;
+        }
+
+        .trend-chip.decreasing {
+          background: #daf5e7;
+          color: #167a4a;
+        }
+
+        .trend-chip.stable {
+          background: #edf2f7;
+          color: #526075;
+        }
+
+        .failure-chip.safe {
+          background: #daf5e7;
+          color: #167a4a;
+        }
+
+        .failure-chip.warning {
+          background: #fff2cf;
+          color: #a96a00;
+        }
+
+        .failure-chip.danger {
+          background: #ffe0e0;
+          color: #b42318;
+        }
+
+        .view-btn {
+          height: 40px;
+          border: none;
+          border-radius: 12px;
+          background: #2f67f6;
+          color: white;
+          padding: 0 16px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .view-btn:hover {
+          opacity: 0.92;
+        }
+
+        .details-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(6, 22, 44, 0.42);
+          display: flex;
+          justify-content: flex-end;
+          z-index: 999;
+        }
+
+        .details-drawer {
+          width: min(760px, 100%);
+          height: 100%;
+          background: #f5f9ff;
+          overflow-y: auto;
+          padding: 24px;
+          box-shadow: -10px 0 40px rgba(0,0,0,0.12);
+        }
+
+        .drawer-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 12px;
+          margin-bottom: 20px;
+        }
+
+        .drawer-kicker {
+          margin: 0 0 6px;
+          color: #5573a5;
+          font-size: 13px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+
+        .drawer-header h2 {
+          margin: 0;
+          font-size: 30px;
+          color: #10233f;
+        }
+
+        .drawer-subtitle {
+          margin: 6px 0 0;
+          color: #6e7f98;
+        }
+
+        .drawer-close {
+          width: 42px;
+          height: 42px;
+          border-radius: 12px;
+          border: none;
+          background: #e9f0fb;
+          cursor: pointer;
+          font-size: 18px;
+        }
+
+        .drawer-section {
+          margin-bottom: 20px;
+        }
+
+        .drawer-section h3 {
+          margin: 0 0 12px;
+          color: #10233f;
+          font-size: 20px;
+        }
+
+        .details-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+        }
+
+        .info-card {
+          padding: 16px;
+        }
+
+        .card-label {
+          margin: 0 0 10px;
+          color: #6e7f98;
+          font-size: 13px;
+        }
+
+        .info-card h3 {
+          margin: 0;
+          font-size: 24px;
+          color: #10233f;
+        }
+
+        .zone-card, .recommend-card {
+          padding: 18px;
+        }
+
+        .zone-text {
+          font-size: 24px;
+          font-weight: 800;
+          color: #10233f;
+          margin: 0 0 8px;
+        }
+
+        .zone-subtext {
+          margin: 0 0 14px;
+          color: #6e7f98;
+          font-size: 14px;
+        }
+
+        .segment-wrap {
+          margin-top: 12px;
+        }
+
+        .segment-track {
+          position: relative;
+          height: 16px;
+          background: #dce6f2;
+          border-radius: 999px;
+          overflow: hidden;
+        }
+
+        .segment-danger {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          background: linear-gradient(90deg, #f59e0b, #ef4444);
+          border-radius: 999px;
+        }
+
+        .segment-labels {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 8px;
+          color: #60718a;
+          font-size: 12px;
+        }
+
+        .segment-empty {
+          font-size: 14px;
+          color: #6e7f98;
+        }
+
+        .reasons-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-top: 14px;
+        }
+
+        .reason-pill {
+          padding: 8px 12px;
+          background: #eaf2ff;
+          color: #234e9b;
+          font-size: 12px;
+        }
+
+        .loading-box, .empty-box {
+          padding: 30px;
+          text-align: center;
+          color: #667890;
+        }
+
+        @media (max-width: 1100px) {
+          .page-top-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .filters {
+            grid-template-columns: 1fr;
+          }
+
+          .details-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 700px) {
+          .page-top-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .panel-header {
+            flex-direction: column;
+            align-items: flex-start;
+          }
+        }
+      `}</style>
+
+      <div className="page-top-grid">
+        <div className="top-card">
+          <p>Visible pipelines</p>
+          <h2>{topStats.total}</h2>
         </div>
-        <div className="pageActions">
-          <button className="btn btnGhost" onClick={() => exportToCSV("pipelines_export", tableRows)}>
-            ⬇ Export filtered data
-          </button>
+        <div className="top-card">
+          <p>High risk</p>
+          <h2>{topStats.high}</h2>
+        </div>
+        <div className="top-card">
+          <p>Medium risk</p>
+          <h2>{topStats.medium}</h2>
+        </div>
+        <div className="top-card">
+          <p>Average failure probability</p>
+          <h2>{topStats.avgFailure}%</h2>
         </div>
       </div>
 
-      {loading ? (
-        <div className="card card-pad">Loading pipelines...</div>
-      ) : (
-        <>
-          <div className="metricsGrid" style={{ marginBottom: 18 }}>
-            <SummaryCard label="Loaded records" value={stats.total} hint="Fetched from backend" />
-            <SummaryCard label="Visible after filters" value={stats.filtered} hint="Current list on the page" />
-            <SummaryCard label="High risk visible" value={stats.high} hint="Highest-priority pipelines in filtered view" />
-            <SummaryCard label="Medium risk visible" value={stats.medium} hint="Needs inspection soon" />
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Pipeline intelligence list</h2>
+            <p className="panel-subtitle">
+              View risk prediction, future trend, and the most vulnerable segment for each pipeline.
+            </p>
           </div>
+        </div>
 
-          <div className="card card-pad" style={{ marginBottom: 18 }}>
-            <div className="sectionHeader">
-              <div>
-                <div className="sectionTitle">Find the right pipeline quickly</div>
-                <div className="sectionSubtitle">Use these filters first, then open a row to see its details.</div>
-              </div>
-              <button className="btn btnSecondary" onClick={clearFilters}>Reset filters</button>
-            </div>
+        <div className="filters">
+          <input
+            className="input"
+            type="text"
+            placeholder="Search by pipeline ID, area, division, material..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
 
-            <div className="filterGrid">
-              <input className="input" placeholder="Search by pipeline ID, area, division, or material" value={q} onChange={(e) => setQ(e.target.value)} />
-              <select className="select" value={division} onChange={(e) => setDivision(e.target.value)}>
-                {divisions.map((d) => <option key={d} value={d}>Division: {d}</option>)}
-              </select>
-              <select className="select" value={material} onChange={(e) => setMaterial(e.target.value)}>
-                {materials.map((m) => <option key={m} value={m}>Material: {m}</option>)}
-              </select>
-              <select className="select" value={risk} onChange={(e) => setRisk(e.target.value)}>
-                {["All", "Low", "Medium", "High"].map((r) => <option key={r} value={r}>Risk: {r}</option>)}
-              </select>
-              <select className="select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-                <option value="">Sort by</option>
-                <option value="risk">Risk level</option>
-                <option value="score">Risk score</option>
-                <option value="leaks">Leak count</option>
-              </select>
-            </div>
+          <select
+            className="select"
+            value={riskFilter}
+            onChange={(e) => setRiskFilter(e.target.value)}
+          >
+            <option value="All">Risk: All</option>
+            <option value="High">High</option>
+            <option value="Medium">Medium</option>
+            <option value="Low">Low</option>
+          </select>
 
-            <label className="small" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 12 }}>
-              <input type="checkbox" checked={highOnly} onChange={(e) => setHighOnly(e.target.checked)} />
-              Show only high-risk pipelines
-            </label>
+          <select
+            className="select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <option value="default">Sort by</option>
+            <option value="failure_desc">Highest failure probability</option>
+            <option value="risk_desc">Highest risk score</option>
+            <option value="life_asc">Lowest estimated life</option>
+            <option value="leaks_desc">Most leaks</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-header">
+          <div>
+            <h2>Pipeline list</h2>
+            <p className="panel-subtitle">
+              Smart pipeline monitoring with prediction-ready data from the backend.
+            </p>
           </div>
+        </div>
 
-          <div className="panelGrid">
-            <div>
-              <PipelineTable rows={tableRows} onSelect={setSelected} selectedId={selectedDetails?.pipeline_id} />
-            </div>
-
-            <div className="vstack">
-              <div className="card card-pad">
-                <div className="sectionHeader">
-                  <div>
-                    <div className="sectionTitle">Selected pipeline</div>
-                    <div className="sectionSubtitle">This side panel explains one record at a time.</div>
-                  </div>
-                </div>
-
-                {selectedDetails ? (
-  <>
-    <div className="detailGrid">
-      <div className="detailItem"><div className="detailLabel">Pipeline ID</div><div className="detailValue">{selectedDetails.pipeline_id}</div></div>
-      <div className="detailItem"><div className="detailLabel">Area</div><div className="detailValue">{selectedDetails.area}</div></div>
-      <div className="detailItem"><div className="detailLabel">Division</div><div className="detailValue">{selectedDetails.zone || "-"}</div></div>
-      <div className="detailItem"><div className="detailLabel">Material</div><div className="detailValue">{selectedDetails.material || "-"}</div></div>
-      <div className="detailItem"><div className="detailLabel">Risk level</div><div className="detailValue">{selectedDetails.corrosion_risk || "Low"}</div></div>
-      <div className="detailItem"><div className="detailLabel">Risk score</div><div className="detailValue">{Number(selectedDetails.risk_score || 0).toFixed(3)}</div></div>
-      <div className="detailItem"><div className="detailLabel">Leak count</div><div className="detailValue">{selectedDetails.previous_leak_count || 0}</div></div>
-      <div className="detailItem"><div className="detailLabel">Install year</div><div className="detailValue">{selectedDetails.install_year || "-"}</div></div>
-      <div className="detailItem"><div className="detailLabel">Annual rainfall</div><div className="detailValue">{selectedDetails.annual_rainfall_mm || "-"}</div></div>
-      <div className="detailItem"><div className="detailLabel">Last maintenance year</div><div className="detailValue">{selectedDetails.last_maintenance_year || "Not recorded"}</div></div>
-    </div>
-
-    <div style={{ marginTop: 14 }}>
-      <Link to={`/pipelines/${selectedDetails.pipeline_id}`} className="btn btnPrimary">
-        Open full detail page
-      </Link>
-    </div>
-  </>
-) : (
-  <div className="emptyState">Select a row from the pipeline table to see more details here.</div>
-)}
-              </div>
-
-              <AlertPanel alerts={alerts.slice(0, 8)} />
-            </div>
+        {loading ? (
+          <div className="loading-box">Loading pipelines...</div>
+        ) : filteredPipelines.length === 0 ? (
+          <div className="empty-box">No pipelines found for the current filters.</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>PIPELINE ID</th>
+                  <th>AREA</th>
+                  <th>DIVISION</th>
+                  <th>MATERIAL</th>
+                  <th>RISK</th>
+                  <th>FAILURE %</th>
+                  <th>30-DAY</th>
+                  <th>90-DAY</th>
+                  <th>TREND</th>
+                  <th>SAFE LIFE</th>
+                  <th>WEAKEST ZONE</th>
+                  <th>DETAILS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPipelines.map((pipeline) => (
+                  <tr key={pipeline.pipeline_id}>
+                    <td className="pipeline-id">{pipeline.pipeline_id}</td>
+                    <td>{pipeline.area_name}</td>
+                    <td>{pipeline.ds_division}</td>
+                    <td>{pipeline.material_type}</td>
+                    <td>
+                      <span className={getRiskBadgeClass(pipeline.risk_level)}>
+                        {pipeline.risk_level}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={getFailureClass(pipeline.failure_probability)}>
+                        {formatNumber(pipeline.failure_probability, 0)}%
+                      </span>
+                    </td>
+                    <td>{formatNumber(pipeline.risk_30_day)}</td>
+                    <td>{formatNumber(pipeline.risk_90_day)}</td>
+                    <td>
+                      <span className={getTrendBadgeClass(pipeline.risk_trend)}>
+                        {pipeline.risk_trend || "Stable"}
+                      </span>
+                    </td>
+                    <td>{formatNumber(pipeline.estimated_life_months, 0)} mo</td>
+                    <td>
+                      {formatNumber(pipeline.weakest_segment_start_m, 0)}m -{" "}
+                      {formatNumber(pipeline.weakest_segment_end_m, 0)}m
+                    </td>
+                    <td>
+                      <button
+                        className="view-btn"
+                        onClick={() => setSelectedPipeline(pipeline)}
+                      >
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </>
-      )}
+        )}
+      </div>
+
+      <PipelineDetailsDrawer
+        pipeline={selectedPipeline}
+        onClose={() => setSelectedPipeline(null)}
+      />
     </div>
   );
 }

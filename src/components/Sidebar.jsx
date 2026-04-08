@@ -31,12 +31,15 @@ export default function Sidebar({ alertsCount = 0 }) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <div className="brandIcon">💧</div>
-        <div>
+        <img
+          src="/icons/water_treatment.png"
+          alt="WaterFlow logo"
+          className="brandLogo"
+        />
+
+        <div className="brandText">
           <div className="brandTitle">WaterFlow</div>
-          <div className="brandSub">
-            Clear, simple pipeline monitoring dashboard
-          </div>
+          <div className="brandSub">Smart pipeline system</div>
         </div>
       </div>
 
@@ -70,21 +73,21 @@ export default function Sidebar({ alertsCount = 0 }) {
 
         <NavItem
           to="/risk-calculator"
-          iconSrc="/icons/analytics.svg"
+          iconSrc="/icons/risk-calculator.svg"
           label="Risk Calculator"
         />
 
         <NavItem
           to="/map-view"
-          iconSrc="/icons/analytics.svg"
+          iconSrc="/icons/map-view.svg"
           label="Map View"
         />
 
         <NavItem
           to="/pipeline-network"
-          iconSrc="/icons/analytics.svg"
+          iconSrc="/icons/pipeline-network.svg"
           label="Pipeline Network"
-       />
+        />
 
         <div className="navSectionTitle" style={{ marginTop: 18 }}>
           ANALYSIS

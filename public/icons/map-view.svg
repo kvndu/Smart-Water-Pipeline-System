@@ -1,0 +1,23 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="black" stroke-width="3">
+
+  <!-- Map shape -->
+  <polygon points="20,120 60,80 100,90 140,70 170,110 130,140 90,130 60,150"></polygon>
+
+  <!-- Fold lines -->
+  <line x1="60" y1="80" x2="90" y2="130" stroke-dasharray="5,5"></line>
+  <line x1="100" y1="90" x2="130" y2="140" stroke-dasharray="5,5"></line>
+
+  <!-- Route line -->
+  <path d="M40 110 Q60 100 80 120 T120 115 T160 120" stroke-dasharray="6,4"></path>
+
+  <!-- Location pin -->
+  <path d="M100 30 
+           C85 30,75 40,75 55 
+           C75 75,100 95,100 95 
+           C100 95,125 75,125 55 
+           C125 40,115 30,100 30 Z" fill="black"></path>
+
+  <!-- Pin inner circle -->
+  <circle cx="100" cy="55" r="8" fill="white"></circle>
+
+</svg>
