@@ -41,6 +41,14 @@ class PipelineCreate(BaseModel):
     last_maintenance_year: int | None = Field(None, ge=1950, le=2100)
 
 
+class RepairCompletePayload(BaseModel):
+    repair_description: str = Field(..., min_length=3)
+    repair_cost: float = Field(..., ge=0)
+    leak_reduction: int = Field(1, ge=0, le=20)
+    condition_after: str = Field("Improved", min_length=2)
+    status_after: str = Field("Active", min_length=2)
+
+
 def normalize_pipeline_payload(payload: PipelineCreate) -> dict:
     current_year = datetime.now().year
     data = payload.model_dump()
@@ -297,7 +305,8 @@ def compute_future_metrics(pipeline: dict, base_score: float) -> dict:
 
 
 def compute_forecast(pipeline: dict) -> dict:
-    base_score = safe_float(calculate_risk(pipeline), 0.0)
+    raw = calculate_risk(pipeline)
+    base_score = safe_float(raw.get("risk_score", 0), 0.0)
     future_metrics = compute_future_metrics(pipeline, base_score)
 
     return {
@@ -578,7 +587,7 @@ def simulate_live_data():
             time.sleep(15)
 
 
-# TEMPORARY disable kara thiyenawa stability test karanna
+# TEMPORARY disable karala thiyenawa stability test karanna
 # @app.on_event("startup")
 # def start_background_simulation():
 #     thread = Thread(target=simulate_live_data, daemon=True)
@@ -746,6 +755,124 @@ def get_pipelines_with_risk(
         results.append(enriched)
 
     return results
+
+
+@app.post("/pipelines/{pipeline_id}/repair-complete")
+def complete_pipeline_repair(pipeline_id: str, payload: RepairCompletePayload):
+    response = (
+        supabase.table("pipelines")
+        .select("*")
+        .eq("pipeline_id", pipeline_id)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Pipeline not found")
+
+    current_pipeline = response.data[0]
+    rain_mm = fetch_live_rain_mm()
+    before_enriched = build_enriched_pipeline(current_pipeline, rain_mm=rain_mm)
+
+    current_leaks = safe_int(current_pipeline.get("previous_leak_count", 0), 0)
+    current_repairs = safe_int(current_pipeline.get("previous_repair_count", 0), 0)
+
+    condition_text = payload.condition_after.strip().lower()
+    status_text = payload.status_after.strip().lower()
+
+    effective_reduction = max(payload.leak_reduction, 1)
+
+    if condition_text in ["improved", "good"]:
+        effective_reduction = max(effective_reduction, 2)
+    elif condition_text in ["replaced", "fully replaced", "renewed"]:
+        effective_reduction = max(effective_reduction, 3)
+
+    if status_text == "active":
+        effective_reduction += 1
+
+    updated_pipeline = {
+        **current_pipeline,
+        "previous_repair_count": current_repairs + 1,
+        "previous_leak_count": max(0, current_leaks - effective_reduction),
+        "last_maintenance_year": datetime.now().year,
+    }
+
+    update_payload = {
+        "previous_repair_count": updated_pipeline["previous_repair_count"],
+        "previous_leak_count": updated_pipeline["previous_leak_count"],
+        "last_maintenance_year": updated_pipeline["last_maintenance_year"],
+    }
+
+    update_result = (
+        supabase.table("pipelines")
+        .update(update_payload)
+        .eq("pipeline_id", pipeline_id)
+        .execute()
+    )
+
+    if not update_result.data:
+        raise HTTPException(status_code=500, detail="Failed to update repaired pipeline")
+
+    after_enriched = build_enriched_pipeline(updated_pipeline, rain_mm=rain_mm)
+    save_derived_fields(pipeline_id, after_enriched)
+    refresh_alert_for_pipeline(after_enriched)
+
+    log_payload = {
+        "log_id": f"LOG-{int(time.time() * 1000)}",
+        "pipeline_id": pipeline_id,
+        "area_name": current_pipeline.get("area_name"),
+        "ds_division": current_pipeline.get("ds_division"),
+        "date_completed": datetime.now().date().isoformat(),
+        "repair_description": payload.repair_description.strip(),
+        "old_risk_score": before_enriched["risk_score"],
+        "old_risk_level": before_enriched["risk_level"],
+        "new_risk_score": after_enriched["risk_score"],
+        "new_risk_level": after_enriched["risk_level"],
+        "condition_after": payload.condition_after.strip(),
+        "status_after": payload.status_after.strip(),
+        "repair_cost": payload.repair_cost,
+    }
+
+    log_insert = supabase.table("maintenance_logs").insert(log_payload).execute()
+
+    if hasattr(log_insert, "data") and log_insert.data is None:
+        raise HTTPException(status_code=500, detail="Pipeline repaired but maintenance log save failed")
+
+    return {
+        "message": "Pipeline marked as repaired and risk recalculated",
+        "pipeline_id": pipeline_id,
+        "repair_description": payload.repair_description.strip(),
+        "repair_cost": payload.repair_cost,
+        "condition_after": payload.condition_after.strip(),
+        "status_after": payload.status_after.strip(),
+        "leak_reduction": payload.leak_reduction,
+        "effective_reduction": effective_reduction,
+        "before": {
+            "risk_score": before_enriched["risk_score"],
+            "risk_level": before_enriched["risk_level"],
+            "previous_leak_count": current_leaks,
+            "previous_repair_count": current_repairs,
+        },
+        "after": {
+            "risk_score": after_enriched["risk_score"],
+            "risk_level": after_enriched["risk_level"],
+            "previous_leak_count": updated_pipeline["previous_leak_count"],
+            "previous_repair_count": updated_pipeline["previous_repair_count"],
+            "last_maintenance_year": updated_pipeline["last_maintenance_year"],
+        },
+        "pipeline": after_enriched,
+        "maintenance_log": log_payload,
+    }
+
+
+@app.get("/maintenance-logs")
+def get_maintenance_logs():
+    response = (
+        supabase.table("maintenance_logs")
+        .select("*")
+        .order("date_completed", desc=True)
+        .execute()
+    )
+    return response.data or []
 
 
 @app.post("/recalculate-all")
