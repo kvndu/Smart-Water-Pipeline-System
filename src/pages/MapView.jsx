@@ -1,790 +1,394 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import api from "../utils/api.js";
-import {
-  MapContainer,
-  TileLayer,
-  Polyline,
-  Popup,
-  Tooltip,
-  CircleMarker,
-  useMap,
-} from "react-leaflet";
+import { MapContainer, GeoJSON, useMap } from "react-leaflet";
+import L from "leaflet";
+import * as EL from "esri-leaflet";
 import "leaflet/dist/leaflet.css";
 
-const KALUTARA_CENTER = [6.5854, 79.9607];
-
-const AREA_ANCHORS = {
-  "Panadura Town": [6.7132, 79.9070],
-  "Payagala Link": [6.5480, 79.9730],
-  "Bulathsinhala Town": [6.7260, 80.0160],
-  "Agalawatta Link": [6.5410, 80.1570],
-  "Kalutara South": [6.5680, 79.9600],
-  "Diyagama": [6.5140, 80.1160],
-  "Kalutara North": [6.6000, 79.9680],
-  Aluthgama: [6.4340, 79.9950],
-  Walana: [6.6590, 79.9300],
-  Halwatura: [6.7450, 80.0620],
-  Molkawa: [6.6190, 80.1290],
-  Waskaduwa: [6.6310, 79.9550],
-  Pinwatta: [6.6530, 79.9480],
-  Millewa: [6.6610, 80.0730],
-  Yatadolawatta: [6.6890, 80.1040],
-  Moragahahena: [6.7170, 80.1000],
-  "Millaniya Link": [6.6700, 80.0300],
-  Thebuwana: [6.5980, 80.1150],
-  Wewita: [6.7230, 79.9900],
-  Moragalla: [6.4780, 79.9840],
-  Bombuwala: [6.5880, 79.9940],
-  Galpatha: [6.5940, 80.0410],
-  Pokunuwita: [6.7890, 80.0930],
-  "Horana Town": [6.7159, 80.0626],
-  "Bandaragama Town": [6.7150, 79.9870],
-  Nagoda: [6.5520, 79.9800],
-  Rajgama: [6.7040, 80.0100],
-  "Agalawatta Town": [6.5400, 80.1550],
-  "Aluthgama Inland": [6.4500, 80.0100],
-};
-
-const DIVISION_ANCHORS = {
-  Panadura: [6.7100, 79.9100],
-  Dodangoda: [6.5640, 80.0100],
-  Bulathsinhala: [6.7220, 80.0180],
-  Matugama: [6.5210, 80.1140],
-  Kalutara: [6.5854, 79.9607],
-  Agalawatta: [6.5400, 80.1550],
-  Beruwala: [6.4788, 79.9828],
-  Horana: [6.7159, 80.0626],
-  Bandaragama: [6.7150, 79.9870],
-};
-
-function getRiskColor(level) {
-  if (level === "High") return "#ef4444";
-  if (level === "Medium") return "#f59e0b";
-  return "#10b981";
-}
-
-function getRiskWeight(level, selected = false, main = false) {
-  let base = main ? 6 : 4;
-  if (level === "High") base += 1;
-  if (level === "Low") base -= 1;
-  return selected ? base + 2 : base;
-}
-
-function getRiskTone(level) {
-  if (level === "High") return "toneHigh";
-  if (level === "Medium") return "toneMedium";
-  return "toneLow";
-}
-
-function SummaryChip({ label, value, tone = "" }) {
-  return (
-    <div className={`mapSummaryChip ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function safeNum(v, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function deterministicUnit(seed) {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (seed.charCodeAt(i) + ((hash << 5) - hash)) | 0;
-  }
-  return ((hash % 1000) + 1000) % 1000 / 1000;
-}
-
-function getAnchor(pipeline) {
-  const area = pipeline.area_name || "";
-  const division = pipeline.ds_division || "";
-  if (AREA_ANCHORS[area]) return AREA_ANCHORS[area];
-  if (DIVISION_ANCHORS[division]) return DIVISION_ANCHORS[division];
-  return [safeNum(pipeline.start_lat, KALUTARA_CENTER[0]), safeNum(pipeline.start_lng, KALUTARA_CENTER[1])];
-}
-
-function buildCurvedPipelinePath(pipeline) {
-  const startLat = safeNum(pipeline.start_lat);
-  const startLng = safeNum(pipeline.start_lng);
-  const endLat = safeNum(pipeline.end_lat);
-  const endLng = safeNum(pipeline.end_lng);
-
-  if (!startLat || !startLng || !endLat || !endLng) return null;
-
-  const anchor = getAnchor(pipeline);
-  const centerLat = (startLat + endLat) / 2;
-  const centerLng = (startLng + endLng) / 2;
-
-  const seed = `${pipeline.pipeline_id}-${pipeline.material_type}-${pipeline.ds_division}`;
-  const bendFactor = deterministicUnit(seed + "-bend");
-  const sideFactor = deterministicUnit(seed + "-side");
-
-  const latDiff = endLat - startLat;
-  const lngDiff = endLng - startLng;
-
-  const perpLat = -lngDiff;
-  const perpLng = latDiff;
-
-  const norm = Math.sqrt(perpLat * perpLat + perpLng * perpLng) || 1;
-  const unitPerpLat = perpLat / norm;
-  const unitPerpLng = perpLng / norm;
-
-  const curvature = 0.004 + bendFactor * 0.01;
-  const direction = sideFactor > 0.5 ? 1 : -1;
-
-  const midLat =
-    centerLat * 0.55 +
-    anchor[0] * 0.45 +
-    unitPerpLat * curvature * direction;
-
-  const midLng =
-    centerLng * 0.55 +
-    anchor[1] * 0.45 +
-    unitPerpLng * curvature * direction;
-
-  return [
-    [startLat, startLng],
-    [midLat, midLng],
-    [endLat, endLng],
-  ];
-}
-
-function interpolateQuadratic(points, t) {
-  const [p0, p1, p2] = points;
-  const lat =
-    (1 - t) * (1 - t) * p0[0] +
-    2 * (1 - t) * t * p1[0] +
-    t * t * p2[0];
-  const lng =
-    (1 - t) * (1 - t) * p0[1] +
-    2 * (1 - t) * t * p1[1] +
-    t * t * p2[1];
-  return [lat, lng];
-}
-
-function buildWeakSegmentCurve(pipeline, pathPoints) {
-  const totalLength = safeNum(pipeline.pipe_length_m, 0);
-  const weakStart = safeNum(pipeline.weakest_segment_start_m, 0);
-  const weakEnd = safeNum(pipeline.weakest_segment_end_m, 0);
-
-  if (!totalLength || weakEnd <= weakStart || !pathPoints || pathPoints.length !== 3) {
-    return null;
-  }
-
-  const startT = Math.max(0, Math.min(1, weakStart / totalLength));
-  const endT = Math.max(0, Math.min(1, weakEnd / totalLength));
-
-  const segment = [];
-  const steps = 10;
-  for (let i = 0; i <= steps; i += 1) {
-    const t = startT + ((endT - startT) * i) / steps;
-    segment.push(interpolateQuadratic(pathPoints, t));
-  }
-  return segment;
-}
-
-function classifyMainPipeline(pipeline) {
-  const length = safeNum(pipeline.pipe_length_m, 0);
-  const diameter = safeNum(pipeline.diameter_mm, 0);
-  return length >= 1800 || diameter >= 250;
-}
-
-function MapAutoFit({ pipelines, selectedPipeline }) {
+function EsriGrayBasemap() {
   const map = useMap();
 
   useEffect(() => {
-    if (selectedPipeline) {
-      const path = buildCurvedPipelinePath(selectedPipeline);
-      if (path) {
-        map.fitBounds(path, { padding: [80, 80], maxZoom: 14 });
-      }
-      return;
-    }
-
-    if (!pipelines.length) return;
-
-    const bounds = pipelines.flatMap((p) => {
-      const path = buildCurvedPipelinePath(p);
-      return path || [];
-    });
-
-    if (bounds.length) {
-      map.fitBounds(bounds, { padding: [40, 40] });
-    }
-  }, [map, pipelines, selectedPipeline]);
+    const baseLayer = EL.basemapLayer("Gray");
+    baseLayer.addTo(map);
+    return () => map.removeLayer(baseLayer);
+  }, [map]);
 
   return null;
 }
 
-function MapPopupContent({ pipeline }) {
-  return (
-    <div className="mapPopup">
-      <div className="mapPopupTitle">Pipeline Details</div>
-      <div><strong>ID:</strong> {pipeline.pipeline_id}</div>
-      <div><strong>Area:</strong> {pipeline.area_name || "-"}</div>
-      <div><strong>Division:</strong> {pipeline.ds_division || "-"}</div>
-      <div><strong>Material:</strong> {pipeline.material_type || "-"}</div>
-      <div><strong>Risk Level:</strong> {pipeline.risk_level || "-"}</div>
-      <div><strong>Risk Score:</strong> {safeNum(pipeline.risk_score).toFixed(3)}</div>
-      <div><strong>Failure Probability:</strong> {pipeline.failure_probability || 0}%</div>
-      <div><strong>Trend:</strong> {pipeline.risk_trend || "-"}</div>
-      <div><strong>Estimated Life:</strong> {pipeline.estimated_life_months || 0} months</div>
-      <div>
-        <strong>Weakest Zone:</strong>{" "}
-        {pipeline.weakest_segment_start_m || 0}m - {pipeline.weakest_segment_end_m || 0}m
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <Link to={`/pipelines/${pipeline.pipeline_id}`} className="mapPopupButton">
-          Open Detail Page
-        </Link>
-      </div>
-    </div>
-  );
+function FitToPipelines({ data }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!data) return;
+
+    const layer = L.geoJSON(data);
+    const bounds = layer.getBounds();
+
+    if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30] });
+
+    setTimeout(() => map.invalidateSize(), 300);
+  }, [data, map]);
+
+  return null;
 }
 
-function SelectedPipelinePanel({ pipeline, onClear }) {
-  if (!pipeline) {
-    return (
-      <div className="card card-pad">
-        <div className="sectionHeader">
-          <div>
-            <div className="sectionTitle">Selected pipeline</div>
-            <div className="sectionSubtitle">
-              Click a line on the map to inspect that asset.
-            </div>
-          </div>
-        </div>
+function getRiskLevel(properties = {}) {
+  const conditionRaw =
+    properties.CONDITION_SCORE ||
+    properties["Condition Score"] ||
+    properties.CONDITION_SCORE_1;
 
-        <div className="vstack">
-          <div className="detailItem">
-            <div className="detailLabel">Status</div>
-            <div className="detailValue">
-              No pipeline selected. Use the map or filters to focus on one asset.
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+  const criticalityRaw = properties.CRITICALITY;
+  const condition = Number(conditionRaw);
+  const criticality = Number(criticalityRaw);
+
+  if (!Number.isNaN(condition)) {
+    if (condition <= 4) return "HIGH";
+    if (condition <= 7) return "MEDIUM";
+    return "LOW";
   }
 
-  return (
-    <div className="card card-pad">
-      <div className="sectionHeader">
-        <div>
-          <div className="sectionTitle">Selected pipeline</div>
-          <div className="sectionSubtitle">
-            Focused operational view of the highlighted asset.
-          </div>
-        </div>
+  if (!Number.isNaN(criticality)) {
+    if (criticality >= 8) return "HIGH";
+    if (criticality >= 5) return "MEDIUM";
+    return "LOW";
+  }
 
-        <button className="mapClearBtn" onClick={onClear}>
-          Clear
-        </button>
-      </div>
-
-      <div className="vstack">
-        <div className="detailItem">
-          <div className="detailLabel">Pipeline ID</div>
-          <div className="detailValue">{pipeline.pipeline_id}</div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Area</div>
-          <div className="detailValue">{pipeline.area_name || "-"}</div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Division</div>
-          <div className="detailValue">{pipeline.ds_division || "-"}</div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Risk level</div>
-          <div className={`mapRiskBadge ${getRiskTone(pipeline.risk_level)}`}>
-            {pipeline.risk_level || "Low"}
-          </div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Failure probability</div>
-          <div className="detailValue">{pipeline.failure_probability || 0}%</div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Risk trend</div>
-          <div className="detailValue">{pipeline.risk_trend || "-"}</div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Estimated safe life</div>
-          <div className="detailValue">{pipeline.estimated_life_months || 0} months</div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Weakest zone</div>
-          <div className="detailValue">
-            {pipeline.weakest_segment_start_m || 0}m - {pipeline.weakest_segment_end_m || 0}m
-          </div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Type</div>
-          <div className="detailValue">
-            {classifyMainPipeline(pipeline) ? "Main trunk / primary line" : "Branch / local line"}
-          </div>
-        </div>
-        <div className="detailItem">
-          <div className="detailLabel">Action</div>
-          <div className="detailValue">
-            <Link to={`/pipelines/${pipeline.pipeline_id}`} className="mapPopupButton">
-              Open full detail page
-            </Link>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return "LOW";
 }
 
-function NodeOverlay({ pipelines, selectedPipelineId, onSelectNode }) {
-  const nodes = useMemo(() => {
-    const grouped = new Map();
-
-    pipelines.forEach((p) => {
-      const key = `${p.area_name || p.ds_division || "Unknown"}`;
-      const anchor = getAnchor(p);
-      if (!grouped.has(key)) {
-        grouped.set(key, {
-          key,
-          name: key,
-          lat: anchor[0],
-          lng: anchor[1],
-          count: 0,
-          high: 0,
-        });
-      }
-      const entry = grouped.get(key);
-      entry.count += 1;
-      if (p.risk_level === "High") entry.high += 1;
-    });
-
-    return Array.from(grouped.values());
-  }, [pipelines]);
-
-  return nodes.map((node) => (
-    <CircleMarker
-      key={node.key}
-      center={[node.lat, node.lng]}
-      radius={node.high > 0 ? 6 : 4}
-      pathOptions={{
-        color: "#1d4ed8",
-        fillColor: "#ffffff",
-        fillOpacity: 0.95,
-        weight: 2,
-        opacity: selectedPipelineId ? 0.45 : 0.85,
-      }}
-      eventHandlers={{
-        click: () => onSelectNode(node.name),
-      }}
-    >
-      <Tooltip direction="top" offset={[0, -4]} opacity={1}>
-        {node.name} node
-      </Tooltip>
-      <Popup>
-        <div className="mapPopup">
-          <div className="mapPopupTitle">Area / Junction Node</div>
-          <div><strong>Name:</strong> {node.name}</div>
-          <div><strong>Visible pipelines:</strong> {node.count}</div>
-          <div><strong>High-risk visible:</strong> {node.high}</div>
-        </div>
-      </Popup>
-    </CircleMarker>
-  ));
+function getRiskColor(risk) {
+  if (risk === "HIGH") return "#ef4444";
+  if (risk === "MEDIUM") return "#f59e0b";
+  return "#0284c7";
 }
 
 export default function MapView() {
-  const [pipelines, setPipelines] = useState([]);
+  const [geoData, setGeoData] = useState(null);
+  const [selectedPipe, setSelectedPipe] = useState(null);
+  const [showStats, setShowStats] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const [search, setSearch] = useState("");
-  const [riskFilter, setRiskFilter] = useState("High");
-  const [areaFilter, setAreaFilter] = useState("All");
-  const [showOnlyHigh, setShowOnlyHigh] = useState(true);
-  const [selectedPipelineId, setSelectedPipelineId] = useState(null);
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        setLoading(true);
-        setError("");
-        const res = await api.get("/pipelines-with-risk?limit=2000");
-        const data = Array.isArray(res.data) ? res.data : [];
-
-        const onlyMapped = data.filter(
-          (p) =>
-            p.start_lat != null &&
-            p.start_lng != null &&
-            p.end_lat != null &&
-            p.end_lng != null
-        );
-
-        setPipelines(onlyMapped);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load map data.");
-      } finally {
+    fetch("/water_mains.geojson")
+      .then((res) => {
+        if (!res.ok) throw new Error("GeoJSON file not found");
+        return res.json();
+      })
+      .then((data) => {
+        setGeoData(data);
         setLoading(false);
-      }
-    }
-
-    fetchData();
+      })
+      .catch((err) => {
+        console.error("GeoJSON load error:", err);
+        setLoading(false);
+      });
   }, []);
 
-  const areaOptions = useMemo(() => {
-    return [
-      "All",
-      ...Array.from(
-        new Set(
-          pipelines.map((p) => p.area_name || p.ds_division).filter(Boolean)
-        )
-      ).sort(),
-    ];
-  }, [pipelines]);
-
-  const filteredPipelines = useMemo(() => {
-    return pipelines.filter((p) => {
-      const text =
-        `${p.pipeline_id || ""} ${p.area_name || ""} ${p.ds_division || ""} ${p.material_type || ""}`.toLowerCase();
-
-      const matchesSearch =
-        search.trim() === "" || text.includes(search.trim().toLowerCase());
-
-      const effectiveRiskFilter = showOnlyHigh ? "High" : riskFilter;
-      const matchesRisk =
-        effectiveRiskFilter === "All" || (p.risk_level || "Low") === effectiveRiskFilter;
-
-      const matchesArea =
-        areaFilter === "All" ||
-        p.area_name === areaFilter ||
-        p.ds_division === areaFilter;
-
-      return matchesSearch && matchesRisk && matchesArea;
-    });
-  }, [pipelines, search, riskFilter, areaFilter, showOnlyHigh]);
-
-  const selectedPipeline = useMemo(() => {
-    return filteredPipelines.find((p) => p.pipeline_id === selectedPipelineId) || null;
-  }, [filteredPipelines, selectedPipelineId]);
-
   const stats = useMemo(() => {
-    const total = filteredPipelines.length;
-    const high = filteredPipelines.filter((p) => p.risk_level === "High").length;
-    const medium = filteredPipelines.filter((p) => p.risk_level === "Medium").length;
-    const low = filteredPipelines.filter((p) => p.risk_level === "Low").length;
-    return { total, high, medium, low };
-  }, [filteredPipelines]);
+    const features = geoData?.features || [];
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+
+    features.forEach((feature) => {
+      const risk = getRiskLevel(feature.properties);
+      if (risk === "HIGH") high += 1;
+      else if (risk === "MEDIUM") medium += 1;
+      else low += 1;
+    });
+
+    return { total: features.length, high, medium, low };
+  }, [geoData]);
+
+  const pipelineStyle = (feature) => {
+    const risk = getRiskLevel(feature.properties);
+
+    return {
+      color: getRiskColor(risk),
+      weight: risk === "HIGH" ? 4 : 3,
+      opacity: 0.95,
+    };
+  };
+
+  const onEachPipeline = (feature, layer) => {
+    const p = feature.properties || {};
+    const risk = getRiskLevel(p);
+
+    layer.on({
+      mouseover: (e) => {
+        e.target.setStyle({
+          color: "#111827",
+          weight: 6,
+          opacity: 1,
+        });
+        e.target.bringToFront();
+      },
+      mouseout: (e) => {
+        e.target.setStyle(pipelineStyle(feature));
+      },
+      click: () => {
+        setSelectedPipe({
+          id: p.WATMAINID || p.OBJECTID || "N/A",
+          objectId: p.OBJECTID || "N/A",
+          status: p.STATUS || "N/A",
+          pressureZone: p.PRESSURE_ZONE || "N/A",
+          material: p.MATERIAL || "N/A",
+          size: p.PIPE_SIZE || p.MAP_LABEL || "N/A",
+          category: p.CATEGORY || "N/A",
+          condition:
+            p.CONDITION_SCORE ||
+            p["Condition Score"] ||
+            p.CONDITION_SCORE_1 ||
+            "N/A",
+          criticality: p.CRITICALITY || "N/A",
+          risk,
+        });
+      },
+    });
+
+    layer.bindTooltip(`WATMAINID: ${p.WATMAINID || "N/A"} | ${risk} risk`, {
+      sticky: true,
+    });
+  };
 
   return (
-    <div className="container" style={{ animation: "fadeIn 0.35s ease" }}>
-      <div className="pageHero pageHeroCompact">
-        <div>
-          <div className="heroEyebrow">Operational GIS View</div>
-          <div className="pageTitle">Kalutara pipeline risk map</div>
-          <div className="pageSubtitle">
-            Structured operational map with primary routes, branch lines, and predicted vulnerable segments.
+    <div style={{ width: "100%", height: "100vh", position: "relative" }}>
+      <MapContainer
+        center={[43.446981, -80.415975]}
+        zoom={16}
+        style={{ width: "100%", height: "100%" }}
+        scrollWheelZoom={true}
+        zoomControl={true}
+        preferCanvas={true}
+      >
+        <EsriGrayBasemap />
+
+        {geoData && (
+          <>
+            <FitToPipelines data={geoData} />
+            <GeoJSON
+              data={geoData}
+              renderer={L.canvas()}
+              style={pipelineStyle}
+              onEachFeature={onEachPipeline}
+            />
+          </>
+        )}
+      </MapContainer>
+
+      <button
+        onClick={() => setShowStats((prev) => !prev)}
+        style={{
+          position: "absolute",
+          top: 20,
+          left: 20,
+          zIndex: 1000,
+          background: "#2563eb",
+          color: "#fff",
+          border: "none",
+          borderRadius: 999,
+          padding: "11px 18px",
+          fontWeight: 900,
+          boxShadow: "0 10px 25px rgba(37,99,235,0.35)",
+          cursor: "pointer",
+        }}
+      >
+        {showStats ? "Hide Stats" : "Map Stats"}
+      </button>
+
+      {showStats && (
+        <div
+          style={{
+            position: "absolute",
+            top: 74,
+            left: 20,
+            zIndex: 1000,
+            width: 280,
+            background: "rgba(255,255,255,0.92)",
+            backdropFilter: "blur(12px)",
+            borderRadius: 18,
+            padding: 16,
+            boxShadow: "0 18px 45px rgba(15,23,42,0.2)",
+            border: "1px solid rgba(148,163,184,0.25)",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 900, color: "#2563eb" }}>
+            GIS PIPELINE MAP
+          </div>
+
+          <h2 style={{ margin: "6px 0 4px", fontSize: 20 }}>
+            Waterloo Water Mains
+          </h2>
+
+          <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
+            Real-world water pipeline network with risk-based visualization.
+          </p>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 10,
+              marginTop: 14,
+            }}
+          >
+            <Stat label="Total" value={loading ? "..." : stats.total} />
+            <Stat
+              label="High"
+              value={loading ? "..." : stats.high}
+              color="#ef4444"
+            />
+            <Stat
+              label="Medium"
+              value={loading ? "..." : stats.medium}
+              color="#f59e0b"
+            />
+            <Stat
+              label="Low"
+              value={loading ? "..." : stats.low}
+              color="#0284c7"
+            />
+          </div>
+
+          <div style={{ marginTop: 14, display: "grid", gap: 8 }}>
+            <Legend color="#ef4444" label="High risk pipeline" />
+            <Legend color="#f59e0b" label="Medium risk pipeline" />
+            <Legend color="#0284c7" label="Low / normal pipeline" />
           </div>
         </div>
-
-        <div className="pageActions">
-          <span className="badge ok">District: Kalutara</span>
-          <span className="badge">Pro map mode</span>
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="card card-pad">Loading map data...</div>
-      ) : error ? (
-        <div className="card card-pad" style={{ color: "var(--danger)" }}>
-          {error}
-        </div>
-      ) : (
-        <>
-          <div className="mapSummaryGrid" style={{ marginBottom: 18 }}>
-            <SummaryChip label="Visible pipelines" value={stats.total} />
-            <SummaryChip label="High risk visible" value={stats.high} tone="toneHigh" />
-            <SummaryChip label="Medium risk visible" value={stats.medium} tone="toneMedium" />
-            <SummaryChip label="Low risk visible" value={stats.low} tone="toneLow" />
-          </div>
-
-          <div className="card card-pad" style={{ marginBottom: 18 }}>
-            <div className="sectionHeader">
-              <div>
-                <div className="sectionTitle">Map filters</div>
-                <div className="sectionSubtitle">
-                  Search, filter, and inspect one asset at a time.
-                </div>
-              </div>
-            </div>
-
-            <div className="filterGrid">
-              <input
-                className="input"
-                placeholder="Search by pipeline ID, area, division, or material"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-
-              <select
-                className="select"
-                value={showOnlyHigh ? "High" : riskFilter}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (showOnlyHigh && value !== "High") setShowOnlyHigh(false);
-                  setRiskFilter(value);
-                }}
-              >
-                {["All", "Low", "Medium", "High"].map((r) => (
-                  <option key={r} value={r}>
-                    Risk: {r}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                className="select"
-                value={areaFilter}
-                onChange={(e) => setAreaFilter(e.target.value)}
-              >
-                {areaOptions.map((a) => (
-                  <option key={a} value={a}>
-                    Area: {a}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="mapTogglesRow">
-              <label className="small mapToggleItem">
-                <input
-                  type="checkbox"
-                  checked={showOnlyHigh}
-                  onChange={(e) => setShowOnlyHigh(e.target.checked)}
-                />
-                Show only high-risk pipelines by default
-              </label>
-            </div>
-          </div>
-
-          <div className="mapLayoutGrid">
-            <div className="card card-pad">
-              <div className="sectionHeader">
-                <div>
-                  <div className="sectionTitle">Pipeline risk map</div>
-                  <div className="sectionSubtitle">
-                    Curved primary and branch routes reduce clutter and create a more realistic operational network view.
-                  </div>
-                </div>
-              </div>
-
-              <div className="mapViewWrap">
-                <MapContainer
-                  center={KALUTARA_CENTER}
-                  zoom={12}
-                  scrollWheelZoom={true}
-                  className="leafletMap"
-                >
-                  <TileLayer
-                    attribution="&copy; OpenStreetMap contributors"
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  />
-
-                  <MapAutoFit
-                    pipelines={filteredPipelines}
-                    selectedPipeline={selectedPipeline}
-                  />
-
-                  <NodeOverlay
-                    pipelines={filteredPipelines}
-                    selectedPipelineId={selectedPipelineId}
-                    onSelectNode={(nodeName) => setAreaFilter(nodeName)}
-                  />
-
-                  {filteredPipelines.map((pipeline) => {
-                    const isSelected = selectedPipelineId === pipeline.pipeline_id;
-                    const isMain = classifyMainPipeline(pipeline);
-
-                    const fullCurve = buildCurvedPipelinePath(pipeline);
-                    const weakCurve = buildWeakSegmentCurve(pipeline, fullCurve);
-
-                    if (!fullCurve) return null;
-
-                    const opacity =
-                      selectedPipelineId && !isSelected ? 0.15 : isSelected ? 1 : 0.82;
-
-                    return (
-                      <div key={pipeline.pipeline_id}>
-                        <Polyline
-                          positions={fullCurve}
-                          pathOptions={{
-                            color: getRiskColor(pipeline.risk_level),
-                            weight: getRiskWeight(pipeline.risk_level, isSelected, isMain),
-                            opacity,
-                            lineCap: "round",
-                            lineJoin: "round",
-                          }}
-                          eventHandlers={{
-                            click: () => setSelectedPipelineId(pipeline.pipeline_id),
-                          }}
-                        >
-                          <Tooltip sticky>
-                            {pipeline.pipeline_id} ({pipeline.risk_level}) {isMain ? "• Main line" : "• Branch"}
-                          </Tooltip>
-                          <Popup>
-                            <MapPopupContent pipeline={pipeline} />
-                          </Popup>
-                        </Polyline>
-
-                        {weakCurve && (
-                          <Polyline
-                            positions={weakCurve}
-                            pathOptions={{
-                              color: "#dc2626",
-                              weight: isSelected ? 10 : 7,
-                              opacity: selectedPipelineId && !isSelected ? 0.12 : 0.95,
-                              dashArray: "10, 8",
-                              lineCap: "round",
-                              lineJoin: "round",
-                            }}
-                            eventHandlers={{
-                              click: () => setSelectedPipelineId(pipeline.pipeline_id),
-                            }}
-                          >
-                            <Tooltip sticky>
-                              Probable failure zone: {pipeline.weakest_segment_start_m}m - {pipeline.weakest_segment_end_m}m
-                            </Tooltip>
-                          </Polyline>
-                        )}
-                      </div>
-                    );
-                  })}
-                </MapContainer>
-              </div>
-            </div>
-
-            <div className="vstack">
-              <div className="card card-pad">
-                <div className="sectionHeader">
-                  <div>
-                    <div className="sectionTitle">Map legend</div>
-                    <div className="sectionSubtitle">
-                      Understand line types clearly.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mapLegendList">
-                  <div className="mapLegendItem">
-                    <span className="mapLegendLine low"></span>
-                    <span>Low risk pipeline</span>
-                  </div>
-                  <div className="mapLegendItem">
-                    <span className="mapLegendLine medium"></span>
-                    <span>Medium risk pipeline</span>
-                  </div>
-                  <div className="mapLegendItem">
-                    <span className="mapLegendLine high"></span>
-                    <span>High risk pipeline</span>
-                  </div>
-                  <div className="mapLegendItem">
-                    <span className="mapLegendLine weakest"></span>
-                    <span>Probable failure zone</span>
-                  </div>
-                  <div className="mapLegendItem">
-                    <span className="mapLegendLine main"></span>
-                    <span>Main trunk / primary line</span>
-                  </div>
-                  <div className="mapLegendItem">
-                    <span className="mapLegendNode"></span>
-                    <span>Area / junction node</span>
-                  </div>
-                </div>
-              </div>
-
-              <SelectedPipelinePanel
-                pipeline={selectedPipeline}
-                onClear={() => setSelectedPipelineId(null)}
-              />
-            </div>
-          </div>
-
-          <style>{`
-            .mapLegendLine {
-              display: inline-block;
-              width: 34px;
-              height: 0;
-              border-top: 4px solid;
-              border-radius: 999px;
-              margin-right: 10px;
-            }
-
-            .mapLegendLine.low { border-color: #10b981; }
-            .mapLegendLine.medium { border-color: #f59e0b; }
-            .mapLegendLine.high { border-color: #ef4444; }
-            .mapLegendLine.weakest {
-              border-color: #dc2626;
-              border-top-width: 7px;
-            }
-            .mapLegendLine.main {
-              border-color: #1d4ed8;
-              border-top-width: 7px;
-            }
-
-            .mapLegendNode {
-              display: inline-block;
-              width: 12px;
-              height: 12px;
-              border-radius: 999px;
-              border: 2px solid #1d4ed8;
-              background: #ffffff;
-              margin-right: 10px;
-            }
-
-            .mapRiskBadge {
-              display: inline-flex;
-              align-items: center;
-              justify-content: center;
-              border-radius: 999px;
-              padding: 8px 14px;
-              font-weight: 700;
-              font-size: 13px;
-            }
-
-            .mapRiskBadge.toneHigh {
-              background: #fee2e2;
-              color: #b91c1c;
-            }
-            .mapRiskBadge.toneMedium {
-              background: #fef3c7;
-              color: #b45309;
-            }
-            .mapRiskBadge.toneLow {
-              background: #d1fae5;
-              color: #047857;
-            }
-
-            .mapClearBtn {
-              border: 1px solid #dbe4f0;
-              background: #fff;
-              color: #1f3b64;
-              border-radius: 12px;
-              padding: 8px 14px;
-              cursor: pointer;
-              font-weight: 600;
-            }
-
-            .mapClearBtn:hover {
-              background: #f6f9fc;
-            }
-          `}</style>
-        </>
       )}
+
+      {selectedPipe && (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: 24,
+            transform: "translateX(-50%)",
+            zIndex: 1000,
+            width: "min(980px, 90%)",
+            background: "rgba(255,255,255,0.95)",
+            backdropFilter: "blur(14px)",
+            borderRadius: 20,
+            padding: "18px 22px",
+            boxShadow: "0 22px 55px rgba(15,23,42,0.28)",
+            border: "1px solid rgba(148,163,184,0.3)",
+          }}
+        >
+          <button
+            onClick={() => setSelectedPipe(null)}
+            style={{
+              position: "absolute",
+              right: 14,
+              top: 12,
+              border: "none",
+              background: "#e5e7eb",
+              borderRadius: 10,
+              padding: "5px 10px",
+              cursor: "pointer",
+              fontWeight: 900,
+            }}
+          >
+            ×
+          </button>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span
+              style={{
+                background: getRiskColor(selectedPipe.risk),
+                color: "#fff",
+                padding: "6px 12px",
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 900,
+              }}
+            >
+              {selectedPipe.risk} RISK
+            </span>
+
+            <h3 style={{ margin: 0, fontSize: 22 }}>
+              Pipeline #{selectedPipe.id}
+            </h3>
+          </div>
+
+          <div
+            style={{
+              marginTop: 14,
+              display: "grid",
+              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+              gap: 12,
+            }}
+          >
+            <Info label="Object ID" value={selectedPipe.objectId} />
+            <Info label="Status" value={selectedPipe.status} />
+            <Info label="Pressure Zone" value={selectedPipe.pressureZone} />
+            <Info label="Material" value={selectedPipe.material} />
+            <Info label="Pipe Size" value={selectedPipe.size} />
+            <Info label="Category" value={selectedPipe.category} />
+            <Info label="Condition" value={selectedPipe.condition} />
+            <Info label="Criticality" value={selectedPipe.criticality} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, color = "#0f172a" }) {
+  return (
+    <div
+      style={{
+        padding: 11,
+        background: "#f8fafc",
+        borderRadius: 14,
+        border: "1px solid #e2e8f0",
+      }}
+    >
+      <div style={{ fontSize: 12, color: "#64748b", fontWeight: 800 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 21, color, fontWeight: 950 }}>{value}</div>
+    </div>
+  );
+}
+
+function Legend({ color, label }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <span
+        style={{
+          width: 24,
+          height: 5,
+          borderRadius: 999,
+          background: color,
+          display: "inline-block",
+        }}
+      />
+      <span style={{ fontSize: 13, color: "#334155", fontWeight: 800 }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function Info({ label, value }) {
+  return (
+    <div
+      style={{
+        background: "#f8fafc",
+        border: "1px solid #e2e8f0",
+        borderRadius: 14,
+        padding: "10px 12px",
+      }}
+    >
+      <div style={{ fontSize: 12, color: "#64748b", fontWeight: 800 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 14, color: "#0f172a", fontWeight: 900 }}>
+        {value}
+      </div>
     </div>
   );
 }

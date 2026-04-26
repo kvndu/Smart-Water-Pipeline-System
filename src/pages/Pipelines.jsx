@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-const API_BASE = "http://127.0.0.1:8000";
+import { fetchPipelines } from "../utils/pipelineService.js";
 
 function getRiskBadgeClass(level) {
   if (level === "High") return "risk-chip high";
@@ -217,8 +217,7 @@ export default function Pipelines() {
   async function loadPipelines() {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/pipelines-with-risk?limit=1000`);
-      const data = await res.json();
+      const data = await fetchPipelines(2000);
       setPipelines(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to fetch pipelines:", error);

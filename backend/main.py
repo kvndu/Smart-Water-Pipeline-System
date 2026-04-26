@@ -1,14 +1,8 @@
-from datetime import datetime
-import random
-import time
-from threading import Thread
-
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from backend.db import supabase
 from backend.risk_engine import calculate_risk
-import requests
 
 app = FastAPI()
 
@@ -23,99 +17,102 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-KALUTARA_LAT = 6.5854
-KALUTARA_LON = 79.9607
+WATERLOO_LAT = 43.4643
+WATERLOO_LON = -80.5204
+KITCHENER_LAT = 43.4516
+KITCHENER_LON = -80.4925
 
 
 class PipelineCreate(BaseModel):
-    pipeline_id: str = Field(..., min_length=3)
-    area_name: str = Field(..., min_length=2)
-    ds_division: str = Field(..., min_length=2)
-    material_type: str = Field(..., min_length=2)
-    diameter_mm: int = Field(..., gt=0)
-    pipe_length_m: int = Field(..., gt=0)
-    install_year: int = Field(..., ge=1950, le=2100)
-    annual_rainfall_mm: int = Field(..., ge=0)
-    previous_leak_count: int = Field(0, ge=0)
-    previous_repair_count: int = Field(0, ge=0)
-    last_maintenance_year: int | None = Field(None, ge=1950, le=2100)
+    WATMAINID: str | None = None
+    STATUS: str | None = None
+    PRESSURE_ZONE: str | None = None
+    ROADSEGMENTID: str | int | None = None
+    MAP_LABEL: str | None = None
+    CATEGORY: str | None = None
+    PIPE_SIZE: float | None = Field(None, ge=0)
+    MATERIAL: str | None = None
+    LINED: str | None = None
+    CONDITION_SCORE: float | None = Field(None, ge=0)
+    CRITICALITY: float | None = Field(None, ge=0)
+    Shape__Length: float | None = Field(None, ge=0)
 
 
 class RepairCompletePayload(BaseModel):
     repair_description: str = Field(..., min_length=3)
     repair_cost: float = Field(..., ge=0)
-    leak_reduction: int = Field(1, ge=0, le=20)
     condition_after: str = Field("Improved", min_length=2)
-    status_after: str = Field("Active", min_length=2)
+    status_after: str = Field("ACTIVE", min_length=2)
 
 
-def normalize_pipeline_payload(payload: PipelineCreate) -> dict:
-    current_year = datetime.now().year
-    data = payload.model_dump()
-
-    data["pipeline_id"] = data["pipeline_id"].strip().upper()
-    data["area_name"] = data["area_name"].strip()
-    data["ds_division"] = data["ds_division"].strip()
-    data["material_type"] = data["material_type"].strip()
-
-    if data["last_maintenance_year"] is None:
-        default_year = max(data["install_year"], current_year - 1)
-        data["last_maintenance_year"] = min(default_year, current_year)
-
-    return data
+def safe_float(value, default=0.0):
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
-def convert_rain_to_score(rain_mm: float) -> float:
-    if rain_mm <= 0:
-        return 0.0
-    if rain_mm <= 2:
-        return 0.2
-    if rain_mm <= 5:
-        return 0.5
-    if rain_mm <= 10:
-        return 0.8
-    return 1.0
+def safe_int(value, default=0):
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
 
 
-def get_recommendation(risk_level, risk_score=0, leaks=0, rain_mm=0):
-    risk_level = (risk_level or "").strip()
+def get_pipeline_identifier(pipeline: dict) -> str:
+    return str(
+        pipeline.get("pipeline_id")
+        or pipeline.get("WATMAINID")
+        or pipeline.get("OBJECTID")
+        or ""
+    )
 
-    if risk_level == "High":
-        action = "Immediate maintenance"
-        priority = "Critical"
-        message = "Urgent attention required due to high risk level."
-    elif risk_level == "Medium":
-        action = "Schedule inspection"
-        priority = "Moderate"
-        message = "Inspection recommended soon."
-    else:
-        action = "Routine monitoring"
-        priority = "Low"
-        message = "System is stable under normal conditions."
 
-    reasons = []
+def get_condition_score(pipeline: dict):
+    return (
+        pipeline.get("CONDITION_SCORE")
+        or pipeline.get("Condition Score")
+        or pipeline.get("condition_score")
+    )
 
-    if float(risk_score or 0) >= 0.7:
-        reasons.append("High risk score detected")
-    elif float(risk_score or 0) >= 0.4:
-        reasons.append("Moderate risk score")
 
-    if int(leaks or 0) >= 2:
-        reasons.append("Multiple past leaks")
-    elif int(leaks or 0) == 1:
-        reasons.append("Leak history exists")
-
-    if float(rain_mm or 0) > 5:
-        reasons.append("Heavy rainfall may increase stress")
-
-    if not reasons:
-        reasons.append("No major risk factors")
+def normalize_dataset_pipeline(pipeline: dict) -> dict:
+    pipeline_id = get_pipeline_identifier(pipeline)
 
     return {
-        "action": action,
-        "priority": priority,
-        "message": message,
-        "reasons": reasons,
+        **pipeline,
+        "pipeline_id": pipeline_id,
+        "area_name": (
+            pipeline.get("area_name")
+            or pipeline.get("MAP_LABEL")
+            or pipeline.get("PRESSURE_ZONE")
+            or "Waterloo/Kitchener"
+        ),
+        "ds_division": (
+            pipeline.get("ds_division")
+            or pipeline.get("PRESSURE_ZONE")
+            or "Unknown"
+        ),
+        "material_type": (
+            pipeline.get("material_type")
+            or pipeline.get("MATERIAL")
+            or "Unknown"
+        ),
+        "diameter_mm": safe_int(
+            pipeline.get("diameter_mm") or pipeline.get("PIPE_SIZE"),
+            0,
+        ),
+        "pipe_length_m": safe_int(
+            pipeline.get("pipe_length_m") or pipeline.get("Shape__Length"),
+            1,
+        ),
+        "status": pipeline.get("status") or pipeline.get("STATUS") or "Unknown",
+        "condition_score": safe_float(get_condition_score(pipeline), None),
+        "criticality": safe_float(pipeline.get("CRITICALITY"), None),
     }
 
 
@@ -127,86 +124,51 @@ def classify_risk_level(score: float) -> str:
     return "Low"
 
 
-def safe_float(value, default=0.0) -> float:
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+def get_recommendation(risk_level, risk_score=0, pipeline=None):
+    risk_level = (risk_level or "").strip()
 
+    reasons = []
 
-def safe_int(value, default=0) -> int:
-    try:
-        if value is None:
-            return default
-        return int(value)
-    except (TypeError, ValueError):
-        return default
+    if pipeline:
+        condition_score = pipeline.get("condition_score")
+        criticality = pipeline.get("criticality")
+        material = pipeline.get("material_type")
+        status = pipeline.get("status")
 
+        if condition_score is not None:
+            reasons.append(f"Condition score is {condition_score}")
 
-def fetch_live_rain_mm() -> float:
-    url = (
-        f"https://api.open-meteo.com/v1/forecast"
-        f"?latitude={KALUTARA_LAT}"
-        f"&longitude={KALUTARA_LON}"
-        f"&current=rain,precipitation"
-    )
+        if criticality is not None:
+            reasons.append(f"Criticality value is {criticality}")
 
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        current = data.get("current", {})
-        return safe_float(current.get("rain", 0), 0.0)
-    except requests.RequestException:
-        return 0.0
+        if material and material != "Unknown":
+            reasons.append(f"Material type is {material}")
 
+        if status and status != "Unknown":
+            reasons.append(f"Current status is {status}")
 
-AREA_COORDS = {
-    "Panadura Town": (6.7132, 79.9070),
-    "Payagala Link": (6.5480, 79.9730),
-    "Bulathsinhala Town": (6.7260, 80.0160),
-    "Agalawatta Link": (6.5410, 80.1570),
-    "Kalutara South": (6.5680, 79.9600),
-    "Diyagama": (6.5140, 80.1160),
-    "Kalutara North": (6.6000, 79.9680),
-    "Aluthgama": (6.4340, 79.9950),
-    "Walana": (6.6590, 79.9300),
-    "Halwatura": (6.7450, 80.0620),
-    "Molkawa": (6.6190, 80.1290),
-    "Waskaduwa": (6.6310, 79.9550),
-    "Pinwatta": (6.6530, 79.9480),
-    "Millewa": (6.6610, 80.0730),
-    "Yatadolawatta": (6.6890, 80.1040),
-    "Moragahahena": (6.7170, 80.1000),
-    "Millaniya Link": (6.6610, 80.0320),
-    "Thebuwana": (6.5980, 80.1150),
-    "Wewita": (6.7230, 79.9900),
-    "Moragalla": (6.4780, 79.9840),
-    "Bombuwala": (6.5880, 79.9940),
-    "Galpatha": (6.5940, 80.0410),
-    "Pokunuwita": (6.7890, 80.0930),
-    "Horana Town": (6.7159, 80.0626),
-    "Bandaragama Town": (6.7150, 79.9870),
-    "Nagoda": (6.5520, 79.9800),
-    "Rajgama": (6.7040, 80.0100),
-    "Agalawatta Town": (6.5400, 80.1550),
-    "Kalutara South Link": (6.5670, 79.9620),
-    "Aluthgama Inland": (6.4500, 80.0100),
-}
+    if risk_level == "High":
+        return {
+            "action": "Immediate inspection required",
+            "priority": "Critical",
+            "message": "This pipeline segment has a high risk level based on condition score or criticality.",
+            "reasons": reasons or ["High dataset-based risk detected"],
+        }
 
-DIVISION_COORDS = {
-    "Panadura": (6.7100, 79.9100),
-    "Dodangoda": (6.5640, 80.0100),
-    "Bulathsinhala": (6.7220, 80.0180),
-    "Matugama": (6.5210, 80.1140),
-    "Kalutara": (6.5854, 79.9607),
-    "Agalawatta": (6.5400, 80.1550),
-    "Beruwala": (6.4788, 79.9828),
-    "Horana": (6.7159, 80.0626),
-    "Bandaragama": (6.7150, 79.9870),
-}
+    if risk_level == "Medium":
+        return {
+            "action": "Schedule inspection",
+            "priority": "Moderate",
+            "message": "This pipeline segment should be inspected soon.",
+            "reasons": reasons or ["Moderate dataset-based risk detected"],
+        }
+
+    return {
+        "action": "Routine monitoring",
+        "priority": "Low",
+        "message": "This pipeline segment is currently low risk.",
+        "reasons": reasons or ["No major risk factors detected"],
+    }
 
 
 def deterministic_unit(seed_text: str) -> float:
@@ -215,45 +177,41 @@ def deterministic_unit(seed_text: str) -> float:
 
 
 def get_base_coordinate(pipeline: dict) -> tuple[float, float]:
-    area_name = str(pipeline.get("area_name", "") or "").strip()
-    ds_division = str(pipeline.get("ds_division", "") or "").strip()
+    label = str(pipeline.get("MAP_LABEL") or pipeline.get("area_name") or "").lower()
 
-    if area_name in AREA_COORDS:
-        return AREA_COORDS[area_name]
-    if ds_division in DIVISION_COORDS:
-        return DIVISION_COORDS[ds_division]
+    if "waterloo" in label:
+        return WATERLOO_LAT, WATERLOO_LON
 
-    return KALUTARA_LAT, KALUTARA_LON
+    if "kitchener" in label:
+        return KITCHENER_LAT, KITCHENER_LON
+
+    return KITCHENER_LAT, KITCHENER_LON
 
 
 def assign_pipeline_coordinates(pipeline: dict) -> dict:
     base_lat, base_lng = get_base_coordinate(pipeline)
 
-    pipeline_id = str(pipeline.get("pipeline_id", "") or "")
-    material = str(pipeline.get("material_type", "") or "")
-    length = max(safe_int(pipeline.get("pipe_length_m", 0), 0), 1)
-    install_year = safe_int(
-        pipeline.get("install_year", datetime.now().year),
-        datetime.now().year,
-    )
+    pipeline_id = str(pipeline.get("pipeline_id") or "")
+    material = str(pipeline.get("material_type") or "")
+    length = max(safe_int(pipeline.get("pipe_length_m"), 1), 1)
 
-    seed_core = f"{pipeline_id}-{material}-{length}-{install_year}"
+    seed_core = f"{pipeline_id}-{material}-{length}"
 
     lat_seed_1 = deterministic_unit(seed_core + "-lat1")
     lng_seed_1 = deterministic_unit(seed_core + "-lng1")
     lat_seed_2 = deterministic_unit(seed_core + "-lat2")
     lng_seed_2 = deterministic_unit(seed_core + "-lng2")
 
-    span = min(max(length / 12000.0, 0.0035), 0.018)
+    span = min(max(length / 15000.0, 0.0025), 0.015)
 
     start_lat = base_lat + ((lat_seed_1 - 0.5) * span)
     start_lng = base_lng + ((lng_seed_1 - 0.5) * span)
     end_lat = base_lat + ((lat_seed_2 - 0.5) * span)
     end_lng = base_lng + ((lng_seed_2 - 0.5) * span)
 
-    if abs(start_lat - end_lat) < 0.0008 and abs(start_lng - end_lng) < 0.0008:
-        end_lat += 0.0015
-        end_lng -= 0.0012
+    if abs(start_lat - end_lat) < 0.0005 and abs(start_lng - end_lng) < 0.0005:
+        end_lat += 0.001
+        end_lng -= 0.001
 
     return {
         "start_lat": round(start_lat, 6),
@@ -263,34 +221,13 @@ def assign_pipeline_coordinates(pipeline: dict) -> dict:
     }
 
 
-def compute_future_metrics(pipeline: dict, base_score: float) -> dict:
-    leaks = safe_int(pipeline.get("previous_leak_count", 0), 0)
-    repairs = safe_int(pipeline.get("previous_repair_count", 0), 0)
-    current_year = datetime.now().year
-    maintenance_year = safe_int(
-        pipeline.get("last_maintenance_year", current_year),
-        current_year,
-    )
-
-    maintenance_gap = max(current_year - maintenance_year, 0)
-    leak_pressure_bonus = min((leaks * 0.015) + (repairs * 0.008), 0.18)
-    maintenance_bonus = min(maintenance_gap * 0.01, 0.12)
-
-    risk_30 = min(base_score + 0.04 + leak_pressure_bonus + maintenance_bonus, 1.0)
-    risk_90 = min(base_score + 0.10 + leak_pressure_bonus + maintenance_bonus, 1.0)
-
-    if risk_30 > base_score + 0.02:
-        trend = "Increasing"
-    elif risk_30 < base_score - 0.02:
-        trend = "Decreasing"
-    else:
-        trend = "Stable"
+def compute_future_metrics(base_score: float) -> dict:
+    risk_30 = min(base_score + 0.03, 1.0)
+    risk_90 = min(base_score + 0.08, 1.0)
 
     if base_score >= 0.85:
         estimated_life_months = 3
-    elif base_score >= 0.7:
-        estimated_life_months = 6
-    elif base_score >= 0.5:
+    elif base_score >= 0.55:
         estimated_life_months = 12
     else:
         estimated_life_months = 24
@@ -299,129 +236,41 @@ def compute_future_metrics(pipeline: dict, base_score: float) -> dict:
         "failure_probability": round(base_score * 100),
         "risk_30_day": round(risk_30, 3),
         "risk_90_day": round(risk_90, 3),
-        "risk_trend": trend,
+        "risk_trend": "Stable",
         "estimated_life_months": estimated_life_months,
     }
 
 
-def compute_forecast(pipeline: dict) -> dict:
-    raw = calculate_risk(pipeline)
-    base_score = safe_float(raw.get("risk_score", 0), 0.0)
-    future_metrics = compute_future_metrics(pipeline, base_score)
-
-    return {
-        "risk_score": round(base_score, 3),
-        "risk_7_day": round(min(base_score + 0.02, 1.0), 3),
-        "risk_30_day": future_metrics["risk_30_day"],
-        "risk_90_day": future_metrics["risk_90_day"],
-        "trend": future_metrics["risk_trend"],
-        "estimated_life_months": future_metrics["estimated_life_months"],
-    }
-
-
 def compute_weakest_segment(pipeline: dict, base_score: float) -> dict:
-    length = max(safe_int(pipeline.get("pipe_length_m", 0), 0), 1)
-    leaks = safe_int(pipeline.get("previous_leak_count", 0), 0)
-    repairs = safe_int(pipeline.get("previous_repair_count", 0), 0)
-    install_year = safe_int(
-        pipeline.get("install_year", datetime.now().year),
-        datetime.now().year,
-    )
-    material = str(pipeline.get("material_type", "") or "").strip().upper()
-    pressure_variation = str(
-        pipeline.get("pressure_variation", "") or ""
-    ).strip().lower()
-    rainfall = safe_float(pipeline.get("annual_rainfall_mm", 0), 0.0)
-
-    segment_count = 5
-    segment_length = max(length // segment_count, 1)
-
-    seed_text = (
-        f"{pipeline.get('pipeline_id', '')}-{install_year}-{material}-"
-        f"{leaks}-{repairs}-{length}"
-    )
-    seed_value = sum(ord(c) for c in seed_text)
-
-    hotspot_index = seed_value % segment_count
-
-    material_bonus = {
-        "CI": 0.10,
-        "DI": 0.08,
-        "STEEL": 0.06,
-        "UPVC": 0.04,
-        "HDPE": 0.03,
-    }.get(material, 0.05)
-
-    variation_bonus = 0.0
-    if pressure_variation == "high":
-        variation_bonus = 0.10
-    elif pressure_variation == "medium":
-        variation_bonus = 0.05
-
-    rainfall_bonus = min(rainfall / 10000, 0.08)
-    leak_bonus = min(leaks * 0.025, 0.15)
-    repair_bonus = min(repairs * 0.015, 0.08)
-    age_bonus = min((datetime.now().year - install_year) / 100, 0.10)
-
-    best_risk = -1.0
-    best_start = 0
-    best_end = segment_length
-
-    for i in range(segment_count):
-        start = i * segment_length
-        end = length if i == segment_count - 1 else min((i + 1) * segment_length, length)
-
-        distance_from_hotspot = abs(i - hotspot_index)
-        hotspot_bonus = max(0.0, 0.12 - (distance_from_hotspot * 0.04))
-        segment_variation = ((seed_value + i * 17) % 9) / 100.0
-
-        segment_risk = min(
-            base_score
-            + hotspot_bonus
-            + segment_variation
-            + material_bonus
-            + variation_bonus
-            + rainfall_bonus
-            + leak_bonus
-            + repair_bonus
-            + age_bonus,
-            1.0,
-        )
-
-        if segment_risk > best_risk:
-            best_risk = segment_risk
-            best_start = start
-            best_end = end
+    length = max(safe_int(pipeline.get("pipe_length_m"), 1), 1)
 
     return {
-        "weakest_segment_start_m": best_start,
-        "weakest_segment_end_m": best_end,
-        "weakest_segment_risk": round(best_risk, 3),
+        "weakest_segment_start_m": 0,
+        "weakest_segment_end_m": length,
+        "weakest_segment_risk": round(base_score, 3),
     }
 
 
-def build_enriched_pipeline(pipeline: dict, rain_mm: float | None = None) -> dict:
+def build_enriched_pipeline(pipeline: dict) -> dict:
+    pipeline = normalize_dataset_pipeline(pipeline)
+
     raw_risk = calculate_risk(pipeline)
 
     if isinstance(raw_risk, dict):
-        base_score = safe_float(raw_risk.get("risk_score", 0), 0.0)
+        base_score = safe_float(raw_risk.get("risk_score"), 0.0)
         risk_level = raw_risk.get("risk_level") or classify_risk_level(base_score)
     else:
         base_score = safe_float(raw_risk, 0.0)
         risk_level = classify_risk_level(base_score)
 
-    future_metrics = compute_future_metrics(pipeline, base_score)
+    future_metrics = compute_future_metrics(base_score)
     weakest_segment = compute_weakest_segment(pipeline, base_score)
     coordinates = assign_pipeline_coordinates(pipeline)
 
-    if rain_mm is None:
-        rain_mm = 0.0
-
     recommendation = get_recommendation(
-        risk_level,
-        base_score,
-        pipeline.get("previous_leak_count", 0),
-        rain_mm,
+        risk_level=risk_level,
+        risk_score=base_score,
+        pipeline=pipeline,
     )
 
     derived_fields = {
@@ -465,56 +314,53 @@ def save_derived_fields(pipeline_id: str, enriched: dict) -> None:
         "end_lng": enriched["end_lng"],
     }
 
-    supabase.table("pipelines").update(update_payload).eq(
-        "pipeline_id", pipeline_id
-    ).execute()
+    if enriched.get("WATMAINID"):
+        supabase.table("pipelines").update(update_payload).eq(
+            "WATMAINID", enriched["WATMAINID"]
+        ).execute()
+    elif enriched.get("OBJECTID"):
+        supabase.table("pipelines").update(update_payload).eq(
+            "OBJECTID", enriched["OBJECTID"]
+        ).execute()
+    else:
+        supabase.table("pipelines").update(update_payload).eq(
+            "pipeline_id", pipeline_id
+        ).execute()
 
 
 def generate_alert_from_pipeline(pipeline: dict):
-    risk_90 = safe_float(pipeline.get("risk_90_day", 0), 0.0)
-    leaks = safe_int(pipeline.get("previous_leak_count", 0), 0)
-    life_months = safe_int(pipeline.get("estimated_life_months", 24), 24)
-    maintenance_year = safe_int(
-        pipeline.get("last_maintenance_year", datetime.now().year),
-        datetime.now().year,
-    )
-    maintenance_gap = max(datetime.now().year - maintenance_year, 0)
+    pipeline = normalize_dataset_pipeline(pipeline)
 
-    if risk_90 >= 0.8:
+    risk_90 = safe_float(pipeline.get("risk_90_day"), 0.0)
+    risk_level = pipeline.get("risk_level")
+    condition_score = pipeline.get("condition_score")
+    criticality = pipeline.get("criticality")
+
+    if risk_level == "High" or risk_90 >= 0.8:
         return {
             "pipeline_id": pipeline["pipeline_id"],
-            "alert_type": "HIGH_RISK_FORECAST",
-            "message": "High probability of failure within 90 days.",
+            "alert_type": "HIGH_RISK_PIPELINE",
+            "message": "High risk pipeline segment detected.",
             "priority": "HIGH",
             "status": "open",
             "risk_score": round(risk_90, 3),
         }
 
-    if leaks >= 2:
+    if condition_score is not None and condition_score <= 7:
         return {
             "pipeline_id": pipeline["pipeline_id"],
-            "alert_type": "REPEATED_LEAKS",
-            "message": f"{leaks} leak incidents recorded.",
+            "alert_type": "CONDITION_WARNING",
+            "message": f"Pipeline condition score is {condition_score}.",
             "priority": "MEDIUM",
             "status": "open",
             "risk_score": round(risk_90, 3),
         }
 
-    if life_months <= 6:
+    if criticality is not None and criticality >= 5:
         return {
             "pipeline_id": pipeline["pipeline_id"],
-            "alert_type": "LOW_SAFE_LIFE",
-            "message": f"Only {life_months} months safe life remaining.",
-            "priority": "MEDIUM",
-            "status": "open",
-            "risk_score": round(risk_90, 3),
-        }
-
-    if maintenance_gap >= 5:
-        return {
-            "pipeline_id": pipeline["pipeline_id"],
-            "alert_type": "MAINTENANCE_OVERDUE",
-            "message": f"No maintenance for {maintenance_gap} years.",
+            "alert_type": "CRITICALITY_WARNING",
+            "message": f"Pipeline criticality value is {criticality}.",
             "priority": "MEDIUM",
             "status": "open",
             "risk_score": round(risk_90, 3),
@@ -548,69 +394,35 @@ def clear_open_alerts_for_pipeline(pipeline_id: str):
 def refresh_alert_for_pipeline(enriched: dict):
     clear_open_alerts_for_pipeline(enriched["pipeline_id"])
     alert = generate_alert_from_pipeline(enriched)
+
     if alert:
         save_alert_if_needed(alert)
 
 
-def simulate_live_data():
-    while True:
-        try:
-            response = supabase.table("pipelines").select("*").limit(20).execute()
-            pipelines = response.data or []
-            rain_mm = fetch_live_rain_mm()
-
-            for p in pipelines:
-                current_risk_30 = safe_float(p.get("risk_30_day", 0.3), 0.3)
-                current_risk_90 = safe_float(p.get("risk_90_day", 0.4), 0.4)
-
-                updated_risk_30 = max(
-                    0.0, min(1.0, current_risk_30 + random.uniform(-0.03, 0.05))
-                )
-                updated_risk_90 = max(
-                    0.0, min(1.0, current_risk_90 + random.uniform(-0.03, 0.05))
-                )
-
-                base_pipeline = {
-                    **p,
-                    "risk_30_day": round(updated_risk_30, 3),
-                    "risk_90_day": round(updated_risk_90, 3),
-                }
-
-                enriched = build_enriched_pipeline(base_pipeline, rain_mm=rain_mm)
-                save_derived_fields(p["pipeline_id"], enriched)
-                time.sleep(0.1)
-
-            time.sleep(15)
-
-        except Exception as e:
-            print("Simulation error:", e)
-            time.sleep(15)
-
-
-# TEMPORARY disable karala thiyenawa stability test karanna
-# @app.on_event("startup")
-# def start_background_simulation():
-#     thread = Thread(target=simulate_live_data, daemon=True)
-#     thread.start()
-
-
 @app.get("/")
 def root():
-    return {"message": "Backend is working"}
+    return {
+        "message": "Smart Water Pipeline Backend is working",
+        "dataset": "Waterloo/Kitchener Water Mains",
+    }
 
 
 @app.get("/pipelines")
-def get_pipelines(limit: int = Query(default=100, ge=1, le=5000), persist: bool = False):
+def get_pipelines(
+    limit: int = Query(default=100, ge=1, le=5000),
+    persist: bool = False,
+):
     response = supabase.table("pipelines").select("*").limit(limit).execute()
     pipelines = response.data or []
 
-    rain_mm = fetch_live_rain_mm()
     results = []
 
     for pipeline in pipelines:
-        enriched = build_enriched_pipeline(pipeline, rain_mm=rain_mm)
+        enriched = build_enriched_pipeline(pipeline)
+
         if persist:
-            save_derived_fields(pipeline["pipeline_id"], enriched)
+            save_derived_fields(enriched["pipeline_id"], enriched)
+
         results.append(enriched)
 
     return results
@@ -619,33 +431,47 @@ def get_pipelines(limit: int = Query(default=100, ge=1, le=5000), persist: bool 
 @app.get("/pipelines/{pipeline_id}")
 def get_pipeline(pipeline_id: str, persist: bool = False):
     response = (
-        supabase.table("pipelines").select("*").eq("pipeline_id", pipeline_id).execute()
+        supabase.table("pipelines")
+        .select("*")
+        .eq("WATMAINID", pipeline_id)
+        .execute()
     )
+
+    if not response.data:
+        response = (
+            supabase.table("pipelines")
+            .select("*")
+            .eq("OBJECTID", pipeline_id)
+            .execute()
+        )
 
     if not response.data:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
-    rain_mm = fetch_live_rain_mm()
-    enriched = build_enriched_pipeline(response.data[0], rain_mm=rain_mm)
+    enriched = build_enriched_pipeline(response.data[0])
 
     if persist:
-        save_derived_fields(pipeline_id, enriched)
+        save_derived_fields(enriched["pipeline_id"], enriched)
 
     return enriched
 
 
 @app.post("/pipelines")
 def create_pipeline(payload: PipelineCreate):
-    data = normalize_pipeline_payload(payload)
+    data = payload.model_dump()
 
-    existing = (
-        supabase.table("pipelines").select("pipeline_id").eq(
-            "pipeline_id", data["pipeline_id"]
-        ).execute()
-    )
+    if data.get("WATMAINID"):
+        data["WATMAINID"] = data["WATMAINID"].strip()
 
-    if existing.data:
-        raise HTTPException(status_code=409, detail="Pipeline ID already exists")
+        existing = (
+            supabase.table("pipelines")
+            .select("WATMAINID")
+            .eq("WATMAINID", data["WATMAINID"])
+            .execute()
+        )
+
+        if existing.data:
+            raise HTTPException(status_code=409, detail="WATMAINID already exists")
 
     insert_response = supabase.table("pipelines").insert(data).execute()
 
@@ -653,72 +479,55 @@ def create_pipeline(payload: PipelineCreate):
         raise HTTPException(status_code=500, detail="Failed to create pipeline")
 
     created = insert_response.data[0]
-
-    rain_mm = fetch_live_rain_mm()
-    enriched = build_enriched_pipeline(created, rain_mm=rain_mm)
-    save_derived_fields(created["pipeline_id"], enriched)
-
-    return enriched
-
-
-@app.get("/live-rain")
-def get_live_rain():
-    url = (
-        f"https://api.open-meteo.com/v1/forecast"
-        f"?latitude={KALUTARA_LAT}"
-        f"&longitude={KALUTARA_LON}"
-        f"&current=rain,precipitation"
-    )
+    enriched = build_enriched_pipeline(created)
 
     try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+        save_derived_fields(enriched["pipeline_id"], enriched)
+    except Exception:
+        pass
 
-        current = data.get("current", {})
-        rain_mm = safe_float(current.get("rain", 0), 0.0)
-        precipitation_mm = safe_float(current.get("precipitation", 0), 0.0)
-        updated_time = current.get("time")
-
-        rain_score = convert_rain_to_score(rain_mm)
-
-        return {
-            "district": "Kalutara",
-            "latitude": KALUTARA_LAT,
-            "longitude": KALUTARA_LON,
-            "rain_mm": rain_mm,
-            "precipitation_mm": precipitation_mm,
-            "rain_score": rain_score,
-            "updated_time": updated_time,
-        }
-
-    except requests.RequestException as e:
-        return {
-            "error": "Failed to fetch live rain data",
-            "details": str(e),
-            "district": "Kalutara",
-            "latitude": KALUTARA_LAT,
-            "longitude": KALUTARA_LON,
-        }
+    return enriched
 
 
 @app.get("/predict/{pipeline_id}")
 def predict_pipeline(pipeline_id: str, persist: bool = False):
     response = (
-        supabase.table("pipelines").select("*").eq("pipeline_id", pipeline_id).execute()
+        supabase.table("pipelines")
+        .select("*")
+        .eq("WATMAINID", pipeline_id)
+        .execute()
     )
+
+    if not response.data:
+        response = (
+            supabase.table("pipelines")
+            .select("*")
+            .eq("OBJECTID", pipeline_id)
+            .execute()
+        )
 
     if not response.data:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
-    rain_mm = fetch_live_rain_mm()
-    enriched = build_enriched_pipeline(response.data[0], rain_mm=rain_mm)
+    enriched = build_enriched_pipeline(response.data[0])
 
     if persist:
-        save_derived_fields(pipeline_id, enriched)
+        save_derived_fields(enriched["pipeline_id"], enriched)
 
     return {
         "pipeline_id": enriched["pipeline_id"],
+        "WATMAINID": enriched.get("WATMAINID"),
+        "OBJECTID": enriched.get("OBJECTID"),
+        "STATUS": enriched.get("STATUS"),
+        "PRESSURE_ZONE": enriched.get("PRESSURE_ZONE"),
+        "MAP_LABEL": enriched.get("MAP_LABEL"),
+        "CATEGORY": enriched.get("CATEGORY"),
+        "PIPE_SIZE": enriched.get("PIPE_SIZE"),
+        "MATERIAL": enriched.get("MATERIAL"),
+        "LINED": enriched.get("LINED"),
+        "CONDITION_SCORE": enriched.get("CONDITION_SCORE"),
+        "CRITICALITY": enriched.get("CRITICALITY"),
+        "Shape__Length": enriched.get("Shape__Length"),
         "risk_score": enriched["risk_score"],
         "risk_level": enriched["risk_level"],
         "failure_probability": enriched["failure_probability"],
@@ -740,18 +549,19 @@ def predict_pipeline(pipeline_id: str, persist: bool = False):
 @app.get("/pipelines-with-risk")
 def get_pipelines_with_risk(
     limit: int = Query(default=100, ge=1, le=5000),
-    persist: bool = False
+    persist: bool = False,
 ):
     response = supabase.table("pipelines").select("*").limit(limit).execute()
     pipelines = response.data or []
 
-    rain_mm = fetch_live_rain_mm()
     results = []
 
     for pipeline in pipelines:
-        enriched = build_enriched_pipeline(pipeline, rain_mm=rain_mm)
+        enriched = build_enriched_pipeline(pipeline)
+
         if persist:
-            save_derived_fields(pipeline["pipeline_id"], enriched)
+            save_derived_fields(enriched["pipeline_id"], enriched)
+
         results.append(enriched)
 
     return results
@@ -762,66 +572,65 @@ def complete_pipeline_repair(pipeline_id: str, payload: RepairCompletePayload):
     response = (
         supabase.table("pipelines")
         .select("*")
-        .eq("pipeline_id", pipeline_id)
+        .eq("WATMAINID", pipeline_id)
         .execute()
     )
+
+    if not response.data:
+        response = (
+            supabase.table("pipelines")
+            .select("*")
+            .eq("OBJECTID", pipeline_id)
+            .execute()
+        )
 
     if not response.data:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
     current_pipeline = response.data[0]
-    rain_mm = fetch_live_rain_mm()
-    before_enriched = build_enriched_pipeline(current_pipeline, rain_mm=rain_mm)
-
-    current_leaks = safe_int(current_pipeline.get("previous_leak_count", 0), 0)
-    current_repairs = safe_int(current_pipeline.get("previous_repair_count", 0), 0)
-
-    condition_text = payload.condition_after.strip().lower()
-    status_text = payload.status_after.strip().lower()
-
-    effective_reduction = max(payload.leak_reduction, 1)
-
-    if condition_text in ["improved", "good"]:
-        effective_reduction = max(effective_reduction, 2)
-    elif condition_text in ["replaced", "fully replaced", "renewed"]:
-        effective_reduction = max(effective_reduction, 3)
-
-    if status_text == "active":
-        effective_reduction += 1
-
-    updated_pipeline = {
-        **current_pipeline,
-        "previous_repair_count": current_repairs + 1,
-        "previous_leak_count": max(0, current_leaks - effective_reduction),
-        "last_maintenance_year": datetime.now().year,
-    }
+    before_enriched = build_enriched_pipeline(current_pipeline)
 
     update_payload = {
-        "previous_repair_count": updated_pipeline["previous_repair_count"],
-        "previous_leak_count": updated_pipeline["previous_leak_count"],
-        "last_maintenance_year": updated_pipeline["last_maintenance_year"],
+        "STATUS": payload.status_after.strip(),
     }
 
-    update_result = (
-        supabase.table("pipelines")
-        .update(update_payload)
-        .eq("pipeline_id", pipeline_id)
-        .execute()
-    )
+    if payload.condition_after.strip().lower() in ["improved", "good", "repaired"]:
+        update_payload["CONDITION_SCORE"] = 8
+
+    elif payload.condition_after.strip().lower() in ["replaced", "fully replaced", "renewed"]:
+        update_payload["CONDITION_SCORE"] = 10
+
+    if current_pipeline.get("WATMAINID"):
+        update_result = (
+            supabase.table("pipelines")
+            .update(update_payload)
+            .eq("WATMAINID", current_pipeline["WATMAINID"])
+            .execute()
+        )
+    else:
+        update_result = (
+            supabase.table("pipelines")
+            .update(update_payload)
+            .eq("OBJECTID", current_pipeline["OBJECTID"])
+            .execute()
+        )
 
     if not update_result.data:
         raise HTTPException(status_code=500, detail="Failed to update repaired pipeline")
 
-    after_enriched = build_enriched_pipeline(updated_pipeline, rain_mm=rain_mm)
-    save_derived_fields(pipeline_id, after_enriched)
-    refresh_alert_for_pipeline(after_enriched)
+    after_enriched = build_enriched_pipeline(update_result.data[0])
+
+    try:
+        save_derived_fields(after_enriched["pipeline_id"], after_enriched)
+        refresh_alert_for_pipeline(after_enriched)
+    except Exception:
+        pass
 
     log_payload = {
-        "log_id": f"LOG-{int(time.time() * 1000)}",
-        "pipeline_id": pipeline_id,
-        "area_name": current_pipeline.get("area_name"),
-        "ds_division": current_pipeline.get("ds_division"),
-        "date_completed": datetime.now().date().isoformat(),
+        "pipeline_id": after_enriched["pipeline_id"],
+        "area_name": after_enriched.get("area_name"),
+        "ds_division": after_enriched.get("ds_division"),
+        "date_completed": "manual",
         "repair_description": payload.repair_description.strip(),
         "old_risk_score": before_enriched["risk_score"],
         "old_risk_level": before_enriched["risk_level"],
@@ -832,32 +641,24 @@ def complete_pipeline_repair(pipeline_id: str, payload: RepairCompletePayload):
         "repair_cost": payload.repair_cost,
     }
 
-    log_insert = supabase.table("maintenance_logs").insert(log_payload).execute()
-
-    if hasattr(log_insert, "data") and log_insert.data is None:
-        raise HTTPException(status_code=500, detail="Pipeline repaired but maintenance log save failed")
+    try:
+        supabase.table("maintenance_logs").insert(log_payload).execute()
+    except Exception:
+        pass
 
     return {
         "message": "Pipeline marked as repaired and risk recalculated",
-        "pipeline_id": pipeline_id,
-        "repair_description": payload.repair_description.strip(),
-        "repair_cost": payload.repair_cost,
-        "condition_after": payload.condition_after.strip(),
-        "status_after": payload.status_after.strip(),
-        "leak_reduction": payload.leak_reduction,
-        "effective_reduction": effective_reduction,
+        "pipeline_id": after_enriched["pipeline_id"],
         "before": {
             "risk_score": before_enriched["risk_score"],
             "risk_level": before_enriched["risk_level"],
-            "previous_leak_count": current_leaks,
-            "previous_repair_count": current_repairs,
+            "condition_score": before_enriched.get("condition_score"),
         },
         "after": {
             "risk_score": after_enriched["risk_score"],
             "risk_level": after_enriched["risk_level"],
-            "previous_leak_count": updated_pipeline["previous_leak_count"],
-            "previous_repair_count": updated_pipeline["previous_repair_count"],
-            "last_maintenance_year": updated_pipeline["last_maintenance_year"],
+            "condition_score": after_enriched.get("condition_score"),
+            "status": after_enriched.get("status"),
         },
         "pipeline": after_enriched,
         "maintenance_log": log_payload,
@@ -869,44 +670,44 @@ def get_maintenance_logs():
     response = (
         supabase.table("maintenance_logs")
         .select("*")
-        .order("date_completed", desc=True)
+        .order("id", desc=True)
         .execute()
     )
+
     return response.data or []
 
 
 @app.post("/recalculate-all")
 def recalculate_all(limit: int = Query(default=100, ge=1, le=5000)):
     try:
-        res = supabase.table("pipelines").select("*").limit(limit).execute()
-        rows = res.data or []
+        response = supabase.table("pipelines").select("*").limit(limit).execute()
+        rows = response.data or []
 
         updated = 0
         errors = []
-        rain_mm = fetch_live_rain_mm()
 
-        for r in rows:
+        for row in rows:
             try:
-                enriched = build_enriched_pipeline(r, rain_mm=rain_mm)
-                save_derived_fields(r["pipeline_id"], enriched)
+                enriched = build_enriched_pipeline(row)
+                save_derived_fields(enriched["pipeline_id"], enriched)
+                refresh_alert_for_pipeline(enriched)
                 updated += 1
-                time.sleep(0.1)
 
             except Exception as e:
-                print(f"Error processing pipeline {r.get('pipeline_id')}: {e}")
-                errors.append({
-                    "pipeline_id": r.get("pipeline_id"),
-                    "error": str(e)
-                })
+                errors.append(
+                    {
+                        "pipeline_id": get_pipeline_identifier(row),
+                        "error": str(e),
+                    }
+                )
 
         return {
             "message": "Recalculation completed",
             "updated": updated,
-            "errors": errors
+            "errors": errors,
         }
 
     except Exception as e:
-        print("FATAL ERROR:", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -915,9 +716,10 @@ def get_alerts():
     response = (
         supabase.table("alerts")
         .select("*")
-        .order("created_at", desc=True)
+        .order("id", desc=True)
         .execute()
     )
+
     return response.data or []
 
 
@@ -926,6 +728,7 @@ def resolve_alert(alert_id: str):
     supabase.table("alerts").update({"status": "resolved"}).eq(
         "id", alert_id
     ).execute()
+
     return {"message": "Alert resolved"}
 
 
@@ -933,7 +736,5 @@ def resolve_alert(alert_id: str):
 def recommendation_api(
     risk_level: str,
     risk_score: float = 0,
-    leaks: int = 0,
-    rain_mm: float = 0
 ):
-    return get_recommendation(risk_level, risk_score, leaks, rain_mm)
+    return get_recommendation(risk_level, risk_score)

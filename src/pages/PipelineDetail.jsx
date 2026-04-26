@@ -1,346 +1,527 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import api from "../utils/api.js";
+import { Link } from "react-router-dom";
+import { supabase } from "../utils/supabaseClient";
 
-function getMaterialScore(material) {
-  const value = String(material || "").trim().toLowerCase();
-
-  if (value === "hdpe") return 0.2;
-  if (value === "upvc" || value === "pvc") return 0.3;
-  if (value === "di") return 0.6;
-  if (value === "ci") return 0.8;
-  if (value === "steel") return 0.9;
-
-  return 0.5;
+function toNumber(value) {
+  const n = Number(value);
+  return Number.isNaN(n) ? null : n;
 }
 
-function convertRainToScore(rainMm) {
-  const value = Number(rainMm || 0);
-
-  if (value <= 0) return 0.0;
-  if (value <= 2) return 0.2;
-  if (value <= 5) return 0.5;
-  if (value <= 10) return 0.8;
-  return 1.0;
+function getConditionScore(p) {
+  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE);
 }
 
-function getRiskLevel(score) {
-  if (score >= 0.7) return "High";
-  if (score >= 0.4) return "Medium";
-  return "Low";
+function getCriticality(p) {
+  return toNumber(p.CRITICALITY);
 }
 
-function getRiskBadgeClass(level) {
-  if (level === "High") return "detailBadgeHigh";
-  if (level === "Medium") return "detailBadgeMedium";
-  return "detailBadgeLow";
+function getRiskLevel(p) {
+  const condition = getConditionScore(p);
+  const criticality = getCriticality(p);
+
+  if (condition !== null) {
+    if (condition <= 4) return "HIGH";
+    if (condition <= 7) return "MEDIUM";
+    return "LOW";
+  }
+
+  if (criticality !== null) {
+    if (criticality >= 8) return "HIGH";
+    if (criticality >= 5) return "MEDIUM";
+  }
+
+  return "LOW";
 }
 
-export default function PipelineDetail() {
-  const { id } = useParams();
+function getRiskColor(risk) {
+  if (risk === "HIGH") return "#ef4444";
+  if (risk === "MEDIUM") return "#f59e0b";
+  return "#0284c7";
+}
 
-  const [pipeline, setPipeline] = useState(null);
-  const [liveRain, setLiveRain] = useState(null);
+function getRecommendation(p) {
+  const risk = getRiskLevel(p);
+  const criticality = getCriticality(p);
+
+  if (risk === "HIGH" || criticality >= 8) {
+    return "Immediate inspection required";
+  }
+
+  if (risk === "MEDIUM") {
+    return "Schedule preventive maintenance";
+  }
+
+  return "Routine monitoring";
+}
+
+export default function Pipelines() {
+  const [pipelines, setPipelines] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [rainLoading, setRainLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [rainError, setRainError] = useState("");
+
+  const [search, setSearch] = useState("");
+  const [riskFilter, setRiskFilter] = useState("ALL");
+  const [materialFilter, setMaterialFilter] = useState("ALL");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
 
   useEffect(() => {
-    async function fetchPipeline() {
-      try {
-        setLoading(true);
-        setError("");
+    async function fetchPipelines() {
+      setLoading(true);
 
-        const res = await api.get("/pipelines-with-risk?limit=2000");
-        const data = Array.isArray(res.data) ? res.data : [];
-        const found = data.find((p) => String(p.pipeline_id) === String(id)) || null;
+      const { data, error } = await supabase
+        .from("pipelines")
+        .select("*")
+        .limit(1000);
 
-        if (!found) {
-          setError("Pipeline record not found.");
-          setPipeline(null);
-        } else {
-          setPipeline(found);
-        }
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load pipeline details.");
-      } finally {
-        setLoading(false);
+      if (error) {
+        console.error("Pipeline fetch error:", error);
+        setPipelines([]);
+      } else {
+        setPipelines(data || []);
       }
+
+      setLoading(false);
     }
 
-    fetchPipeline();
-  }, [id]);
-
-  useEffect(() => {
-    async function fetchRain() {
-      try {
-        setRainLoading(true);
-        setRainError("");
-        const res = await api.get("/live-rain");
-        setLiveRain(res.data || null);
-      } catch (err) {
-        console.error(err);
-        setRainError("Failed to load live rain data.");
-      } finally {
-        setRainLoading(false);
-      }
-    }
-
-    fetchRain();
+    fetchPipelines();
   }, []);
 
-  const breakdown = useMemo(() => {
-    if (!pipeline) return null;
+  const materials = useMemo(() => {
+    return [
+      "ALL",
+      ...new Set(
+        pipelines
+          .map((p) => p.MATERIAL)
+          .filter(Boolean)
+          .map((x) => String(x).trim())
+      ),
+    ];
+  }, [pipelines]);
 
-    const currentYear = new Date().getFullYear();
-    const installYear = Number(pipeline.install_year || currentYear);
-    const age = Math.max(currentYear - installYear, 0);
+  const categories = useMemo(() => {
+    return [
+      "ALL",
+      ...new Set(
+        pipelines
+          .map((p) => p.CATEGORY)
+          .filter(Boolean)
+          .map((x) => String(x).trim())
+      ),
+    ];
+  }, [pipelines]);
 
-    const ageScore = Math.min(age / 50, 1);
-    const materialScore = getMaterialScore(pipeline.material_type);
-    const incidentScore = Math.min(
-      (Number(pipeline.previous_leak_count || 0) * 0.7 +
-        Number(pipeline.previous_repair_count || 0) * 0.3) / 10,
-      1
-    );
+  const enriched = useMemo(() => {
+    return pipelines.map((p) => ({
+      ...p,
+      risk: getRiskLevel(p),
+      condition: getConditionScore(p),
+      criticality: getCriticality(p),
+      recommendation: getRecommendation(p),
+    }));
+  }, [pipelines]);
 
-    const rainMm = Number(liveRain?.rain_mm || pipeline.annual_rainfall_mm || 0);
-    const rainScore = convertRainToScore(rainMm);
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
 
-    const finalScore =
-      0.35 * ageScore +
-      0.25 * materialScore +
-      0.25 * incidentScore +
-      0.15 * rainScore;
+    return enriched.filter((p) => {
+      const matchSearch =
+        !q ||
+        String(p.WATMAINID || "").toLowerCase().includes(q) ||
+        String(p.OBJECTID || "").toLowerCase().includes(q) ||
+        String(p.MATERIAL || "").toLowerCase().includes(q) ||
+        String(p.PIPE_SIZE || "").toLowerCase().includes(q) ||
+        String(p.PRESSURE_ZONE || "").toLowerCase().includes(q);
 
-    const riskLevel = getRiskLevel(finalScore);
+      const matchRisk = riskFilter === "ALL" || p.risk === riskFilter;
+      const matchMaterial =
+        materialFilter === "ALL" || String(p.MATERIAL) === materialFilter;
+      const matchCategory =
+        categoryFilter === "ALL" || String(p.CATEGORY) === categoryFilter;
 
+      return matchSearch && matchRisk && matchMaterial && matchCategory;
+    });
+  }, [enriched, search, riskFilter, materialFilter, categoryFilter]);
+
+  const stats = useMemo(() => {
     return {
-      age,
-      ageScore: ageScore.toFixed(3),
-      materialScore: materialScore.toFixed(3),
-      incidentScore: incidentScore.toFixed(3),
-      rainScore: rainScore.toFixed(3),
-      finalScore: finalScore.toFixed(3),
-      riskLevel,
-      rainMm: Number(rainMm).toFixed(1),
+      total: enriched.length,
+      high: enriched.filter((p) => p.risk === "HIGH").length,
+      medium: enriched.filter((p) => p.risk === "MEDIUM").length,
+      low: enriched.filter((p) => p.risk === "LOW").length,
     };
-  }, [pipeline, liveRain]);
+  }, [enriched]);
+
+  if (loading) {
+    return <div className="pipelinePage">Loading pipeline records...</div>;
+  }
 
   return (
-    <div className="container" style={{ animation: "fadeIn 0.35s ease" }}>
-      <div className="pageHero pageHeroCompact">
+    <div className="pipelinePage">
+      <div className="hero">
         <div>
-          <div className="heroEyebrow">Pipeline Detail</div>
-          <div className="pageTitle">Pipeline detail page</div>
-          <div className="pageSubtitle">
-            View one pipeline in detail, including score breakdown and maintenance recommendation.
-          </div>
+          <div className="eyebrow">Asset Inventory</div>
+          <h1>Pipeline Records</h1>
+          <p>
+            Real-world Waterloo water mains dataset එකෙන් pipeline asset
+            details, condition score, criticality සහ risk level manage කරන page එක.
+          </p>
         </div>
 
-        <div className="pageActions">
-          <Link to="/pipelines" className="btn btnSecondary">
-            ← Back to pipelines
-          </Link>
+        <div className="heroBadges">
+          <span>{stats.total} records</span>
+          <span>{stats.high} high risk</span>
+          <span>{stats.medium} medium risk</span>
         </div>
       </div>
 
-      {loading ? (
-        <div className="card card-pad">Loading pipeline details...</div>
-      ) : error ? (
-        <div className="card card-pad" style={{ color: "var(--danger)" }}>
-          {error}
+      <div className="kpiGrid">
+        <Kpi title="Total Records" value={stats.total} />
+        <Kpi title="High Risk" value={stats.high} color="#ef4444" />
+        <Kpi title="Medium Risk" value={stats.medium} color="#f59e0b" />
+        <Kpi title="Low / Normal" value={stats.low} color="#0284c7" />
+      </div>
+
+      <div className="panel">
+        <div className="panelHead">
+          <div>
+            <h2>Water Main Asset List</h2>
+            <p>Search and filter real pipeline records from Supabase.</p>
+          </div>
         </div>
-      ) : (
-        <>
-          <div className="detailTopGrid" style={{ marginBottom: 18 }}>
-            <div className="card card-pad">
-              <div className="sectionHeader">
-                <div>
-                  <div className="sectionTitle">Basic information</div>
-                  <div className="sectionSubtitle">Core details for the selected pipeline.</div>
-                </div>
-                {breakdown && (
-                  <span className={`detailRiskBadge ${getRiskBadgeClass(breakdown.riskLevel)}`}>
-                    {breakdown.riskLevel}
-                  </span>
-                )}
-              </div>
 
-              <div className="detailGrid">
-                <div className="detailItem">
-                  <div className="detailLabel">Pipeline ID</div>
-                  <div className="detailValue">{pipeline.pipeline_id}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Area</div>
-                  <div className="detailValue">{pipeline.area_name || "-"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Division</div>
-                  <div className="detailValue">{pipeline.ds_division || "-"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Material</div>
-                  <div className="detailValue">{pipeline.material_type || "-"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Install year</div>
-                  <div className="detailValue">{pipeline.install_year || "-"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Pipe age</div>
-                  <div className="detailValue">{breakdown?.age ?? 0} years</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Leak count</div>
-                  <div className="detailValue">{pipeline.previous_leak_count || 0}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Repair count</div>
-                  <div className="detailValue">{pipeline.previous_repair_count || 0}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Pipe length</div>
-                  <div className="detailValue">{pipeline.pipe_length_m || "-"} m</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Diameter</div>
-                  <div className="detailValue">{pipeline.diameter_mm || "-"} mm</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Last maintenance year</div>
-                  <div className="detailValue">{pipeline.last_maintenance_year || "Not recorded"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Live rain</div>
-                  <div className="detailValue">
-                    {rainLoading ? "Loading..." : `${breakdown?.rainMm || "0.0"} mm`}
-                  </div>
-                </div>
-              </div>
+        <div className="filters">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search WATMAINID, OBJECTID, material, size, zone..."
+          />
 
-              {rainError ? (
-                <div className="small" style={{ marginTop: 12, color: "var(--danger)" }}>
-                  {rainError}
-                </div>
-              ) : null}
-            </div>
+          <select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)}>
+            <option value="ALL">All Risk</option>
+            <option value="HIGH">High</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="LOW">Low</option>
+          </select>
 
-            <div className="card card-pad">
-              <div className="sectionHeader">
-                <div>
-                  <div className="sectionTitle">Risk result</div>
-                  <div className="sectionSubtitle">Final calculated output for this pipeline.</div>
-                </div>
-              </div>
+          <select
+            value={materialFilter}
+            onChange={(e) => setMaterialFilter(e.target.value)}
+          >
+            {materials.map((m) => (
+              <option key={m} value={m}>
+                {m === "ALL" ? "All Material" : m}
+              </option>
+            ))}
+          </select>
 
-              <div className="vstack">
-                <div className="detailItem">
-                  <div className="detailLabel">Final risk score</div>
-                  <div className="detailValue">{breakdown?.finalScore || "0.000"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Risk level</div>
-                  <div className="detailValue">{breakdown?.riskLevel || "Low"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Current system risk</div>
-                  <div className="detailValue">{pipeline.risk_level || "-"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Stored risk score</div>
-                  <div className="detailValue">{Number(pipeline.risk_score || 0).toFixed(3)}</div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+          >
+            {categories.map((c) => (
+              <option key={c} value={c}>
+                {c === "ALL" ? "All Category" : c}
+              </option>
+            ))}
+          </select>
+        </div>
 
-          <div className="panelGrid">
-            <div className="card card-pad">
-              <div className="sectionHeader">
-                <div>
-                  <div className="sectionTitle">Score breakdown</div>
-                  <div className="sectionSubtitle">Why this pipeline received this risk result.</div>
-                </div>
-              </div>
+        <div className="smallText">
+          Showing {filtered.length} of {enriched.length} records.
+        </div>
 
-              <div className="detailGrid">
-                <div className="detailItem">
-                  <div className="detailLabel">Age Score</div>
-                  <div className="detailValue">{breakdown?.ageScore || "0.000"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Material Score</div>
-                  <div className="detailValue">{breakdown?.materialScore || "0.000"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Incident Score</div>
-                  <div className="detailValue">{breakdown?.incidentScore || "0.000"}</div>
-                </div>
-                <div className="detailItem">
-                  <div className="detailLabel">Rain Score</div>
-                  <div className="detailValue">{breakdown?.rainScore || "0.000"}</div>
-                </div>
-              </div>
-            </div>
+        <div className="tableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>WATMAINID</th>
+                <th>Object ID</th>
+                <th>Material</th>
+                <th>Pipe Size</th>
+                <th>Pressure Zone</th>
+                <th>Category</th>
+                <th>Status</th>
+                <th>Condition</th>
+                <th>Criticality</th>
+                <th>Length</th>
+                <th>Risk</th>
+                <th>Recommendation</th>
+                <th>Details</th>
+              </tr>
+            </thead>
 
-            <div className="card card-pad">
-              <div className="sectionHeader">
-                <div>
-                  <div className="sectionTitle">Recommended action</div>
-                  <div className="sectionSubtitle">Recommendation returned by the backend API.</div>
-                </div>
-              </div>
-
-              {pipeline.recommendation ? (
-                <div className="vstack" style={{ gap: 12 }}>
-                  <div className="detailItem">
-                    <div className="detailLabel">Action</div>
-                    <div className="detailValue">{pipeline.recommendation.action || "-"}</div>
-                  </div>
-
-                  <div className="detailItem">
-                    <div className="detailLabel">Priority</div>
-                    <div className="detailValue">{pipeline.recommendation.priority || "-"}</div>
-                  </div>
-
-                  <div className="detailItem">
-                    <div className="detailLabel">Message</div>
-                    <div className="detailValue">
-                      {pipeline.recommendation.message || "No message available."}
-                    </div>
-                  </div>
-
-                  <div className="detailItem">
-                    <div className="detailLabel">Reasons</div>
-                    <div className="detailValue">
-                      {Array.isArray(pipeline.recommendation.reasons) &&
-                      pipeline.recommendation.reasons.length > 0 ? (
-                        <ul style={{ margin: "8px 0 0 18px", padding: 0 }}>
-                          {pipeline.recommendation.reasons.map((reason, index) => (
-                            <li key={index} style={{ marginBottom: 6 }}>
-                              {reason}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        "No reasons available."
-                      )}
-                    </div>
-                  </div>
-                </div>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan="13" className="emptyCell">
+                    No pipeline records found.
+                  </td>
+                </tr>
               ) : (
-                <div className="emptyState" style={{ textAlign: "left" }}>
-                  No recommendation available.
-                </div>
+                filtered.map((p) => (
+                  <tr key={p.OBJECTID}>
+                    <td className="strong">{p.WATMAINID || "N/A"}</td>
+                    <td>{p.OBJECTID || "N/A"}</td>
+                    <td>{p.MATERIAL || "N/A"}</td>
+                    <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
+                    <td>{p.PRESSURE_ZONE || "N/A"}</td>
+                    <td>{p.CATEGORY || "N/A"}</td>
+                    <td>{p.STATUS || "N/A"}</td>
+                    <td>{p.condition ?? "N/A"}</td>
+                    <td>{p.criticality ?? "N/A"}</td>
+                    <td>{p.Shape__Length || "N/A"}</td>
+                    <td>
+                      <span
+                        className="riskBadge"
+                        style={{ background: getRiskColor(p.risk) }}
+                      >
+                        {p.risk}
+                      </span>
+                    </td>
+                    <td>{p.recommendation}</td>
+                    <td>
+                      <Link
+                        className="viewBtn"
+                        to={`/pipelines/${p.WATMAINID || p.OBJECTID}`}
+                      >
+                        View
+                      </Link>
+                    </td>
+                  </tr>
+                ))
               )}
-            </div>
-          </div>
-        </>
-      )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <style>{`
+        .pipelinePage {
+          padding: 28px;
+          animation: fadeIn 0.35s ease;
+        }
+
+        .hero {
+          background: linear-gradient(135deg, #ffffff, #eff6ff);
+          border: 1px solid #e2e8f0;
+          border-radius: 24px;
+          padding: 28px;
+          display: flex;
+          justify-content: space-between;
+          gap: 20px;
+          align-items: flex-start;
+          margin-bottom: 22px;
+          box-shadow: 0 18px 45px rgba(15,23,42,0.08);
+        }
+
+        .eyebrow {
+          display: inline-block;
+          background: #dbeafe;
+          color: #2563eb;
+          font-weight: 900;
+          font-size: 12px;
+          letter-spacing: 1px;
+          padding: 7px 12px;
+          border-radius: 999px;
+          text-transform: uppercase;
+          margin-bottom: 10px;
+        }
+
+        .hero h1 {
+          margin: 0;
+          font-size: 30px;
+          color: #0f172a;
+        }
+
+        .hero p {
+          margin: 8px 0 0;
+          color: #64748b;
+          max-width: 760px;
+        }
+
+        .heroBadges {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
+        .heroBadges span {
+          background: #fff;
+          border: 1px solid #e2e8f0;
+          border-radius: 999px;
+          padding: 8px 12px;
+          font-size: 12px;
+          font-weight: 900;
+          color: #0f172a;
+        }
+
+        .kpiGrid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+          margin-bottom: 22px;
+        }
+
+        .kpi {
+          background: #fff;
+          border: 1px solid #e2e8f0;
+          border-radius: 18px;
+          padding: 18px;
+          box-shadow: 0 10px 25px rgba(15,23,42,0.05);
+        }
+
+        .kpiTitle {
+          color: #64748b;
+          font-size: 13px;
+          font-weight: 800;
+        }
+
+        .kpiValue {
+          margin-top: 8px;
+          font-size: 32px;
+          font-weight: 950;
+        }
+
+        .panel {
+          background: #fff;
+          border: 1px solid #e2e8f0;
+          border-radius: 22px;
+          padding: 20px;
+          box-shadow: 0 18px 45px rgba(15,23,42,0.07);
+        }
+
+        .panelHead h2 {
+          margin: 0;
+          font-size: 22px;
+          color: #0f172a;
+        }
+
+        .panelHead p {
+          margin: 6px 0 16px;
+          color: #64748b;
+          font-size: 14px;
+        }
+
+        .filters {
+          display: grid;
+          grid-template-columns: 1fr 150px 180px 180px;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
+
+        input, select {
+          height: 42px;
+          border: 1px solid #cbd5e1;
+          border-radius: 12px;
+          padding: 0 12px;
+          font-weight: 700;
+          background: #fff;
+          color: #0f172a;
+        }
+
+        .smallText {
+          color: #64748b;
+          font-size: 13px;
+          font-weight: 800;
+          margin-bottom: 14px;
+        }
+
+        .tableWrap {
+          overflow-x: auto;
+          max-height: 680px;
+          overflow-y: auto;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 1450px;
+        }
+
+        th {
+          text-align: left;
+          color: #475569;
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: .4px;
+          padding: 12px;
+          border-bottom: 1px solid #e2e8f0;
+          background: #f8fafc;
+          position: sticky;
+          top: 0;
+          z-index: 2;
+        }
+
+        td {
+          padding: 12px;
+          border-bottom: 1px solid #e2e8f0;
+          font-size: 13px;
+          color: #0f172a;
+          vertical-align: middle;
+        }
+
+        tr:hover td {
+          background: #f8fafc;
+        }
+
+        .strong {
+          font-weight: 950;
+          color: #2563eb;
+        }
+
+        .riskBadge {
+          color: #fff;
+          padding: 6px 10px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 950;
+          display: inline-block;
+          white-space: nowrap;
+        }
+
+        .viewBtn {
+          display: inline-block;
+          text-decoration: none;
+          background: #2563eb;
+          color: white;
+          padding: 8px 12px;
+          border-radius: 10px;
+          font-size: 12px;
+          font-weight: 900;
+        }
+
+        .emptyCell {
+          text-align: center;
+          color: #64748b;
+          font-weight: 800;
+          padding: 30px;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(5px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 1000px) {
+          .hero,
+          .kpiGrid,
+          .filters {
+            grid-template-columns: 1fr;
+            display: grid;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function Kpi({ title, value, color = "#0f172a" }) {
+  return (
+    <div className="kpi">
+      <div className="kpiTitle">{title}</div>
+      <div className="kpiValue" style={{ color }}>
+        {value}
+      </div>
     </div>
   );
 }

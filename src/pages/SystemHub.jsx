@@ -1,275 +1,721 @@
-import { useMemo, useState, useEffect } from "react";
-import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend, BarChart, CartesianGrid, XAxis, YAxis, Bar } from "recharts";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { supabase } from "../utils/supabaseClient";
 
-const PIPELINES_LS_KEY = "waterflow_pipelines_v1";
-const LOGS_LS_KEY = "waterflow_maint_logs_v1";
-
-function loadPipelines() {
-    try {
-        const raw = localStorage.getItem(PIPELINES_LS_KEY);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
-    } catch {
-        return [];
-    }
+function toNumber(value) {
+  const n = Number(value);
+  return Number.isNaN(n) ? null : n;
 }
 
-function loadLogs() {
-    try {
-        const raw = localStorage.getItem(LOGS_LS_KEY);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed : [];
-    } catch {
-        return [];
-    }
+function getConditionScore(p) {
+  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE);
 }
 
-function daysSince(dateStr) {
-    if (!dateStr) return null;
-    const d = new Date(dateStr);
-    if (Number.isNaN(d.getTime())) return null;
-    const diffMs = Date.now() - d.getTime();
-    return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+function getCriticality(p) {
+  return toNumber(p.CRITICALITY);
 }
 
-const PIE_COLORS = { Low: "#10b981", Medium: "#f59e0b", High: "#ef4444" };
+function getRiskLevel(p) {
+  const condition = getConditionScore(p);
+  const criticality = getCriticality(p);
+
+  if (condition !== null) {
+    if (condition <= 4) return "HIGH";
+    if (condition <= 7) return "MEDIUM";
+    return "LOW";
+  }
+
+  if (criticality !== null) {
+    if (criticality >= 8) return "HIGH";
+    if (criticality >= 5) return "MEDIUM";
+  }
+
+  return "LOW";
+}
+
+function getPriority(p) {
+  const risk = getRiskLevel(p);
+  const criticality = getCriticality(p) ?? 0;
+
+  if (risk === "HIGH" || criticality >= 8) return "IMMEDIATE";
+  if (risk === "MEDIUM" || criticality >= 5) return "PLANNED";
+  return "ROUTINE";
+}
+
+function getAction(p) {
+  const priority = getPriority(p);
+
+  if (priority === "IMMEDIATE") {
+    return "Send field team for inspection and prepare repair plan.";
+  }
+
+  if (priority === "PLANNED") {
+    return "Add to preventive maintenance schedule.";
+  }
+
+  return "Continue routine monitoring.";
+}
+
+function getRiskColor(risk) {
+  if (risk === "HIGH") return "#dc2626";
+  if (risk === "MEDIUM") return "#d97706";
+  return "#0b6fa4";
+}
+
+function getPipelineId(p) {
+  return p.WATMAINID || p.OBJECTID || "N/A";
+}
 
 export default function SystemHub() {
-    const [pipelines, setPipelines] = useState([]);
-    const [logs, setLogs] = useState([]);
+  const [pipelines, setPipelines] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        // Initial fetch
-        setPipelines(loadPipelines());
-        setLogs(loadLogs());
+  useEffect(() => {
+    async function loadPipelines() {
+      setLoading(true);
 
-        // Listen for storage changes in the same window frame
-        const handleStorageChange = () => {
-            setPipelines(loadPipelines());
-            setLogs(loadLogs());
+      const { data, error } = await supabase
+        .from("pipelines")
+        .select("*")
+        .limit(1000);
+
+      if (error) {
+        console.error("System Hub fetch error:", error);
+        setPipelines([]);
+      } else {
+        setPipelines(data || []);
+      }
+
+      setLoading(false);
+    }
+
+    loadPipelines();
+  }, []);
+
+  const enriched = useMemo(() => {
+    return pipelines.map((p) => ({
+      ...p,
+      pipelineId: getPipelineId(p),
+      risk: getRiskLevel(p),
+      priority: getPriority(p),
+      action: getAction(p),
+      condition: getConditionScore(p),
+      criticality: getCriticality(p),
+    }));
+  }, [pipelines]);
+
+  const stats = useMemo(() => {
+    const high = enriched.filter((p) => p.risk === "HIGH").length;
+    const medium = enriched.filter((p) => p.risk === "MEDIUM").length;
+    const low = enriched.filter((p) => p.risk === "LOW").length;
+    const immediate = enriched.filter((p) => p.priority === "IMMEDIATE").length;
+
+    return {
+      total: enriched.length,
+      high,
+      medium,
+      low,
+      immediate,
+      systemHealth: enriched.length ? Math.round((low / enriched.length) * 100) : 0,
+    };
+  }, [enriched]);
+
+  const priorityQueue = useMemo(() => {
+    const priorityOrder = { IMMEDIATE: 3, PLANNED: 2, ROUTINE: 1 };
+    const riskOrder = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+
+    return [...enriched]
+      .sort((a, b) => {
+        const priorityDiff = priorityOrder[b.priority] - priorityOrder[a.priority];
+        if (priorityDiff !== 0) return priorityDiff;
+
+        const riskDiff = riskOrder[b.risk] - riskOrder[a.risk];
+        if (riskDiff !== 0) return riskDiff;
+
+        return Number(b.criticality || 0) - Number(a.criticality || 0);
+      })
+      .slice(0, 8);
+  }, [enriched]);
+
+  const zoneSummary = useMemo(() => {
+    const zones = {};
+
+    enriched.forEach((p) => {
+      const zone = p.PRESSURE_ZONE || "Unknown Zone";
+
+      if (!zones[zone]) {
+        zones[zone] = {
+          zone,
+          total: 0,
+          high: 0,
+          medium: 0,
+          immediate: 0,
         };
+      }
 
-        window.addEventListener("storage", handleStorageChange);
-        return () => window.removeEventListener("storage", handleStorageChange);
-    }, []);
+      zones[zone].total += 1;
 
-    const totalPipelines = pipelines.length;
-    // Pipelines maintained can be derived from unique pipeline IDs in logs
-    const maintainedCount = useMemo(() => new Set(logs.map(l => l.pipeline_id)).size, [logs]);
-    const estimatedCost = useMemo(() => logs.reduce((sum, l) => sum + (Number(l.cost) || 0), 0), [logs]);
+      if (p.risk === "HIGH") zones[zone].high += 1;
+      if (p.risk === "MEDIUM") zones[zone].medium += 1;
+      if (p.priority === "IMMEDIATE") zones[zone].immediate += 1;
+    });
 
-    const riskData = useMemo(() => {
-        let low = 0, med = 0, high = 0;
-        pipelines.forEach(p => {
-            const r = p.corrosion_risk || "Low";
-            if (r === "High") high++;
-            else if (r === "Medium") med++;
-            else low++;
-        });
-        return [
-            { name: "Low Risk", value: low, fill: PIE_COLORS.Low },
-            { name: "Medium Risk", value: med, fill: PIE_COLORS.Medium },
-            { name: "High Risk", value: high, fill: PIE_COLORS.High },
-        ];
-    }, [pipelines]);
+    return Object.values(zones)
+      .sort((a, b) => b.immediate + b.high + b.medium - (a.immediate + a.high + a.medium))
+      .slice(0, 6);
+  }, [enriched]);
 
-    const alerts = useMemo(() => {
-        const arr = [];
-        pipelines.forEach(p => {
-            if (p.corrosion_risk === "High") {
-                arr.push({
-                    id: p.pipeline_id + "-risk",
-                    pipeline_id: p.pipeline_id,
-                    title: "High Risk Criticality",
-                    type: "CRITICAL",
-                    message: "Pipeline is currently classified as High Risk."
-                });
-            }
+  return (
+    <div className="systemHubPage">
+      <div className="hubHero">
+        <div>
+          <div className="eyebrow">Engineer Decision Hub</div>
+          <h1>System Hub</h1>
+        </div>
 
-            const ds = daysSince(p.last_maintenance_date);
-            if (ds === null || ds > 365) {
-                arr.push({
-                    id: p.pipeline_id + "-overdue",
-                    pipeline_id: p.pipeline_id,
-                    title: "Maintenance Overdue",
-                    type: "WARN",
-                    message: `Pipeline is past-due for scheduled maintenance (${ds === null ? 'Never Maintained' : ds + ' Days Since'}).`
-                });
-            }
-        });
-        return arr;
-    }, [pipelines]);
+        <div className="heroBadges">
+          <span>{loading ? "Loading..." : `${stats.total} assets loaded`}</span>
+          <span>{stats.immediate} immediate actions</span>
+          <span>{stats.systemHealth}% system health</span>
+        </div>
+      </div>
 
-    return (
-        <div className="container" style={{ animation: "fadeIn 0.5s ease-out" }}>
-            {/* Header */}
-            <div className="header" style={{ marginBottom: "28px", borderBottom: "1px solid #e2e8f0", paddingBottom: "16px" }}>
-                <div>
-                    <div className="title" style={{ fontSize: "28px", color: "var(--text)", fontWeight: 900, marginBottom: "4px" }}>
-                        Decision Hub
-                    </div>
-                    <div className="subtitle" style={{ fontSize: "15px", color: "var(--muted)" }}>
-                        A centralized overview to make critical engineering decisions faster.
-                    </div>
-                </div>
-                <div className="hstack">
-                    <span className="badge" style={{ fontSize: "12px", padding: "6px 12px", background: "var(--primary)", color: "#fff", border: "none" }}>
-                        🌟 Executive Hub Overview
-                    </span>
-                </div>
+      {loading ? (
+        <div className="panel">Loading System Hub data...</div>
+      ) : (
+        <>
+          <div className="hubKpiGrid">
+            <Kpi title="Total Assets" value={stats.total} />
+            <Kpi title="High Risk" value={stats.high} tone="danger" />
+            <Kpi title="Medium Risk" value={stats.medium} tone="warn" />
+            <Kpi title="Immediate Queue" value={stats.immediate} tone="danger" />
+            <Kpi title="System Health" value={`${stats.systemHealth}%`} tone="blue" />
+          </div>
+
+          <div className="actionStrip">
+            <Link to="/alerts" className="actionCard">
+              <div className="actionIcon">🚨</div>
+              <div>
+                <h3>Open Alerts</h3>
+                <p>Review high and medium risk pipeline alerts.</p>
+              </div>
+            </Link>
+
+            <Link to="/maintenance" className="actionCard">
+              <div className="actionIcon">🛠️</div>
+              <div>
+                <h3>Maintenance</h3>
+                <p>Plan repair and inspection workflow.</p>
+              </div>
+            </Link>
+
+            <Link to="/map-view" className="actionCard">
+              <div className="actionIcon">🗺️</div>
+              <div>
+                <h3>Map View</h3>
+                <p>Locate pipeline risk areas visually.</p>
+              </div>
+            </Link>
+
+            <Link to="/pipelines" className="actionCard">
+              <div className="actionIcon">📋</div>
+              <div>
+                <h3>Pipeline Records</h3>
+                <p>Inspect full asset records and details.</p>
+              </div>
+            </Link>
+          </div>
+
+          <div className="hubGrid">
+            <div className="panel">
+              <div className="sectionHead">
+                <h2>What should engineers do today?</h2>
+                <p>Simple operational summary based on current dataset risk.</p>
+              </div>
+
+              <div className="decisionList">
+                <DecisionCard
+                  title="Immediate Field Inspection"
+                  value={stats.immediate}
+                  text="High-risk or high-criticality assets should be inspected first."
+                  tone="danger"
+                />
+                <DecisionCard
+                  title="Preventive Maintenance"
+                  value={stats.medium}
+                  text="Medium-risk assets should be planned for the next maintenance cycle."
+                  tone="warn"
+                />
+                <DecisionCard
+                  title="Routine Monitoring"
+                  value={stats.low}
+                  text="Low-risk assets can remain under normal monitoring."
+                  tone="blue"
+                />
+              </div>
             </div>
 
-            {/* Key Metrics */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "20px", marginBottom: "32px" }}>
-                <div className="card card-pad" style={{ background: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)", color: "#fff", border: "none", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div>
-                            <div style={{ color: "#94a3b8", fontSize: "14px", fontWeight: 800 }}>Total Pipelines</div>
-                            <div style={{ fontSize: "36px", fontWeight: 900, marginTop: "8px" }}>{totalPipelines}</div>
-                        </div>
-                        <div style={{ fontSize: "32px" }}>🌐</div>
-                    </div>
-                    <div style={{ marginTop: "16px", paddingTop: "12px", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: "12px", color: "#94a3b8" }}>
-                        Total assets actively monitored globally.
-                    </div>
-                </div>
+            <div className="panel">
+              <div className="sectionHead">
+                <h2>Pressure Zone Priorities</h2>
+                <p>Zones sorted by inspection and maintenance demand.</p>
+              </div>
 
-                <div className="card card-pad" style={{ background: "linear-gradient(135deg, #0284c7 0%, #0369a1 100%)", color: "#fff", border: "none", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div>
-                            <div style={{ color: "#bae6fd", fontSize: "14px", fontWeight: 800 }}>Maintained Pipelines</div>
-                            <div style={{ fontSize: "36px", fontWeight: 900, marginTop: "8px" }}>{maintainedCount}</div>
-                        </div>
-                        <div style={{ fontSize: "32px" }}>🛡️</div>
-                    </div>
-                    <div style={{ marginTop: "16px", paddingTop: "12px", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: "12px", color: "#bae6fd" }}>
-                        Unique pipelines with logged maintenance histories.
-                    </div>
-                </div>
+              <div className="zoneList">
+                {zoneSummary.length === 0 ? (
+                  <div className="empty">No zone data available.</div>
+                ) : (
+                  zoneSummary.map((zone) => (
+                    <div key={zone.zone} className="zoneCard">
+                      <div>
+                        <h3>{zone.zone}</h3>
+                        <p>{zone.total} assets in this pressure zone</p>
+                      </div>
 
-                <div className="card card-pad" style={{ background: "linear-gradient(135deg, #059669 0%, #047857 100%)", color: "#fff", border: "none", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div>
-                            <div style={{ color: "#a7f3d0", fontSize: "14px", fontWeight: 800 }}>Maint. Expenditures</div>
-                            <div style={{ fontSize: "36px", fontWeight: 900, marginTop: "8px" }}>
-                                ${estimatedCost.toLocaleString()}
-                            </div>
-                        </div>
-                        <div style={{ fontSize: "32px" }}>💲</div>
+                      <div className="zoneStats">
+                        <span className="dangerText">{zone.high} High</span>
+                        <span className="warnText">{zone.medium} Medium</span>
+                        <span>{zone.immediate} Immediate</span>
+                      </div>
                     </div>
-                    <div style={{ marginTop: "16px", paddingTop: "12px", borderTop: "1px solid rgba(255,255,255,0.1)", fontSize: "12px", color: "#a7f3d0" }}>
-                        Total cost accrued from existing service repairs.
-                    </div>
-                </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="sectionHead">
+              <h2>Priority Inspection Queue</h2>
+              <p>Engineer should inspect these assets first.</p>
             </div>
 
-            {/* Main Content Areas: Risk Overview & Automated Alerts Panel */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+            <div className="priorityTableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Pipeline</th>
+                    <th>Material</th>
+                    <th>Size</th>
+                    <th>Zone</th>
+                    <th>Condition</th>
+                    <th>Criticality</th>
+                    <th>Risk</th>
+                    <th>Recommended Action</th>
+                  </tr>
+                </thead>
 
-                {/* Left: Risk Overview (Pie Chart) */}
-                <div className="card card-pad" style={{ display: "flex", flexDirection: "column", border: "1px solid #e2e8f0", background: "linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)" }}>
-                    <div style={{ marginBottom: "16px", borderBottom: "1px dashed #cbd5e1", paddingBottom: "12px" }}>
-                        <div style={{ fontSize: "18px", color: "var(--text)", fontWeight: 900 }}>⚖️ Risk Overview</div>
-                        <div style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>System-wide distribution by evaluated asset risk category.</div>
-                    </div>
-
-                    <div style={{ flex: 1, minHeight: "360px", width: "100%" }}>
-                        {totalPipelines === 0 ? (
-                            <div style={{ display: "flex", height: "100%", justifyContent: "center", alignItems: "center", color: "var(--muted)", fontSize: "14px", fontWeight: 700 }}>
-                                No pipelines available in the system.
-                            </div>
-                        ) : (
-                            <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                    <Tooltip contentStyle={{ borderRadius: "8px", fontWeight: 800, border: "none", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)" }} />
-                                    <Legend iconType="circle" wrapperStyle={{ fontSize: "14px", fontWeight: 800 }} />
-                                    <Pie
-                                        data={riskData}
-                                        dataKey="value"
-                                        nameKey="name"
-                                        cx="50%"
-                                        cy="45%"
-                                        innerRadius={80}
-                                        outerRadius={120}
-                                        paddingAngle={4}
-                                        label={{ fill: "#334155", fontSize: "13px", fontWeight: 900 }}
-                                    >
-                                        {riskData.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={entry.fill} stroke="transparent" />
-                                        ))}
-                                    </Pie>
-                                </PieChart>
-                            </ResponsiveContainer>
-                        )}
-                    </div>
-                </div>
-
-                {/* Right: Automated Alerts Panel */}
-                <div className="card card-pad" style={{ display: "flex", flexDirection: "column", border: "1px solid #e2e8f0", background: "linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)" }}>
-                    <div style={{ marginBottom: "16px", borderBottom: "1px dashed #cbd5e1", paddingBottom: "12px" }}>
-                        <div style={{ fontSize: "18px", color: "var(--text)", fontWeight: 900 }}>🚨 Automated Alerts Panel</div>
-                        <div style={{ fontSize: "13px", color: "var(--muted)", marginTop: "4px" }}>AI-like notification alerts for past-due assets & excessive risks.</div>
-                    </div>
-
-                    <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", maxHeight: "400px", paddingRight: "6px" }}>
-                        {alerts.length === 0 ? (
-                            <div style={{ padding: "40px 20px", textAlign: "center", borderRadius: "12px", background: "#ecfdf5", border: "1px dashed #10b981", color: "#059669", fontWeight: 800 }}>
-                                <div style={{ fontSize: "28px", marginBottom: "8px" }}>🟢</div>
-                                All pipelines are operating safely.<br />No overdue maintenance or critical risks.
-                            </div>
-                        ) : (
-                            alerts.map((alert) => (
-                                <div key={alert.id} style={{
-                                    padding: "16px",
-                                    borderRadius: "12px",
-                                    background: alert.type === "CRITICAL" ? "#fef2f2" : "#fffbeb",
-                                    border: `1px solid ${alert.type === 'CRITICAL' ? '#fecaca' : '#fde68a'}`,
-                                    boxShadow: "0 2px 4px rgba(0,0,0,0.02)"
-                                }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                                        <span className={`badge ${alert.type === "CRITICAL" ? "danger" : "warn"}`} style={{ fontSize: "11px", border: "none" }}>
-                                            {alert.title}
-                                        </span>
-                                        <span style={{ fontSize: "14px", fontWeight: 900, color: "var(--text)" }}>{alert.pipeline_id}</span>
-                                    </div>
-                                    <div style={{ fontSize: "13px", color: alert.type === "CRITICAL" ? "#991b1b" : "#92400e", fontWeight: 600 }}>
-                                        {alert.message}
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
+                <tbody>
+                  {priorityQueue.map((p) => (
+                    <tr key={`${p.pipelineId}-${p.OBJECTID}`}>
+                      <td className="strong">{p.pipelineId}</td>
+                      <td>{p.MATERIAL || "N/A"}</td>
+                      <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
+                      <td>{p.PRESSURE_ZONE || "N/A"}</td>
+                      <td>{p.condition ?? "N/A"}</td>
+                      <td>{p.criticality ?? "N/A"}</td>
+                      <td>
+                        <span
+                          className="riskBadge"
+                          style={{ background: getRiskColor(p.risk) }}
+                        >
+                          {p.risk}
+                        </span>
+                      </td>
+                      <td>{p.action}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+          </div>
+        </>
+      )}
 
-            <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
+      <style>{`
+        .systemHubPage {
+          width: 100%;
+          padding: 28px;
+          animation: fadeIn 0.35s ease;
         }
-        
-        ::-webkit-scrollbar {
-           width: 6px;
+
+        .hubHero {
+          background: linear-gradient(135deg, #ffffff, #eef8fc, #dff2fa);
+          border: 1px solid #c8e3ef;
+          border-radius: 22px;
+          padding: 28px;
+          display: flex;
+          justify-content: space-between;
+          gap: 20px;
+          margin-bottom: 22px;
+          box-shadow: 0 12px 30px rgba(20, 65, 90, 0.08);
         }
-        ::-webkit-scrollbar-track {
-           background: transparent;
+
+        .eyebrow {
+          display: inline-block;
+          background: #e2f4fb;
+          color: #0b6fa4;
+          border: 1px solid #b9ddeb;
+          font-weight: 900;
+          font-size: 12px;
+          letter-spacing: 1px;
+          padding: 7px 12px;
+          border-radius: 999px;
+          text-transform: uppercase;
+          margin-bottom: 10px;
         }
-        ::-webkit-scrollbar-thumb {
-           background: #cbd5e1;
-           border-radius: 10px;
+
+        .hubHero h1 {
+          margin: 0;
+          font-size: 30px;
+          color: #123047;
         }
-        ::-webkit-scrollbar-thumb:hover {
-           background: #94a3b8;
+
+        .hubHero p {
+          margin: 8px 0 0;
+          color: #5f7688;
+          font-weight: 600;
+          line-height: 1.6;
+          max-width: 760px;
         }
-        
-        @media (max-width: 900px) {
-           .container > div:last-child {
-              grid-template-columns: 1fr !important;
-           }
+
+        .heroBadges {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          align-items: flex-start;
+        }
+
+        .heroBadges span {
+          background: white;
+          border: 1px solid #d7e6ef;
+          border-radius: 999px;
+          padding: 8px 12px;
+          font-size: 12px;
+          font-weight: 900;
+          color: #123047;
+        }
+
+        .hubKpiGrid {
+          display: grid;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 16px;
+          margin-bottom: 22px;
+        }
+
+        .hubKpi,
+        .panel,
+        .actionCard {
+          background: white;
+          border: 1px solid #d7e6ef;
+          border-radius: 18px;
+          box-shadow: 0 10px 26px rgba(20, 65, 90, 0.08);
+        }
+
+        .hubKpi {
+          padding: 18px;
+        }
+
+        .hubKpi.danger {
+          background: #fdeaea;
+        }
+
+        .hubKpi.warn {
+          background: #fff4dd;
+        }
+
+        .hubKpi.blue {
+          background: #e2f4fb;
+        }
+
+        .hubKpi span {
+          color: #5f7688;
+          font-size: 13px;
+          font-weight: 900;
+        }
+
+        .hubKpi strong {
+          display: block;
+          margin-top: 8px;
+          color: #123047;
+          font-size: 32px;
+          font-weight: 950;
+        }
+
+        .actionStrip {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+          margin-bottom: 22px;
+        }
+
+        .actionCard {
+          display: flex;
+          gap: 14px;
+          padding: 18px;
+          text-decoration: none;
+          color: #123047;
+          transition: 0.2s ease;
+        }
+
+        .actionCard:hover {
+          transform: translateY(-2px);
+          border-color: #8cc9df;
+          background: #f6fafc;
+        }
+
+        .actionIcon {
+          width: 44px;
+          height: 44px;
+          border-radius: 14px;
+          background: #dff2fa;
+          color: #0b6fa4;
+          display: grid;
+          place-items: center;
+          font-size: 22px;
+          flex: 0 0 auto;
+        }
+
+        .actionCard h3 {
+          margin: 0;
+          font-size: 16px;
+          color: #123047;
+        }
+
+        .actionCard p {
+          margin: 5px 0 0;
+          color: #5f7688;
+          font-size: 13px;
+          font-weight: 600;
+        }
+
+        .hubGrid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 22px;
+          margin-bottom: 22px;
+        }
+
+        .panel {
+          padding: 20px;
+        }
+
+        .sectionHead h2 {
+          margin: 0;
+          color: #123047;
+          font-size: 22px;
+        }
+
+        .sectionHead p {
+          margin: 6px 0 16px;
+          color: #5f7688;
+          font-weight: 600;
+        }
+
+        .decisionList,
+        .zoneList {
+          display: grid;
+          gap: 12px;
+        }
+
+        .decisionCard,
+        .zoneCard {
+          border-radius: 16px;
+          padding: 16px;
+          border: 1px solid #d7e6ef;
+          background: #f6fafc;
+        }
+
+        .decisionCard.danger {
+          background: #fdeaea;
+        }
+
+        .decisionCard.warn {
+          background: #fff4dd;
+        }
+
+        .decisionCard.blue {
+          background: #e2f4fb;
+        }
+
+        .decisionCard span {
+          color: #5f7688;
+          font-size: 13px;
+          font-weight: 900;
+        }
+
+        .decisionCard strong {
+          display: block;
+          margin-top: 6px;
+          color: #123047;
+          font-size: 28px;
+          font-weight: 950;
+        }
+
+        .decisionCard p {
+          margin: 8px 0 0;
+          color: #31546a;
+          font-weight: 700;
+          line-height: 1.5;
+        }
+
+        .zoneCard {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          align-items: center;
+        }
+
+        .zoneCard h3 {
+          margin: 0;
+          color: #123047;
+        }
+
+        .zoneCard p {
+          margin: 5px 0 0;
+          color: #5f7688;
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .zoneStats {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          color: #31546a;
+          font-size: 12px;
+          font-weight: 900;
+        }
+
+        .dangerText {
+          color: #dc2626;
+        }
+
+        .warnText {
+          color: #d97706;
+        }
+
+        .priorityTableWrap {
+          overflow-x: auto;
+          max-height: 500px;
+          overflow-y: auto;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 950px;
+        }
+
+        th {
+          text-align: left;
+          color: #31546a;
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing: .4px;
+          padding: 12px;
+          border-bottom: 1px solid #d7e6ef;
+          background: #eef8fc;
+          position: sticky;
+          top: 0;
+          z-index: 2;
+        }
+
+        td {
+          padding: 12px;
+          border-bottom: 1px solid #e4edf3;
+          font-size: 13px;
+          color: #123047;
+        }
+
+        tr:hover td {
+          background: #f6fafc;
+        }
+
+        .strong {
+          font-weight: 950;
+          color: #0b6fa4;
+        }
+
+        .riskBadge {
+          color: white;
+          border-radius: 999px;
+          padding: 6px 12px;
+          font-size: 11px;
+          font-weight: 950;
+          white-space: nowrap;
+        }
+
+        .empty {
+          padding: 24px;
+          text-align: center;
+          border-radius: 14px;
+          border: 1px dashed #b9ddeb;
+          background: #f6fafc;
+          color: #5f7688;
+          font-weight: 800;
+        }
+
+        @media (max-width: 1200px) {
+          .hubKpiGrid,
+          .actionStrip {
+            grid-template-columns: repeat(2, 1fr);
+          }
+
+          .hubGrid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 700px) {
+          .systemHubPage {
+            padding: 18px;
+          }
+
+          .hubHero {
+            display: grid;
+          }
+
+          .heroBadges {
+            justify-content: flex-start;
+          }
+
+          .hubKpiGrid,
+          .actionStrip {
+            grid-template-columns: 1fr;
+          }
+
+          .zoneCard {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+
+          .zoneStats {
+            justify-content: flex-start;
+          }
         }
       `}</style>
-        </div>
-    );
+    </div>
+  );
+}
+
+function Kpi({ title, value, tone = "" }) {
+  return (
+    <div className={`hubKpi ${tone}`}>
+      <span>{title}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function DecisionCard({ title, value, text, tone = "" }) {
+  return (
+    <div className={`decisionCard ${tone}`}>
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <p>{text}</p>
+    </div>
+  );
 }

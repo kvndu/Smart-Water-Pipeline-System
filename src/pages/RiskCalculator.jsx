@@ -1,377 +1,932 @@
 import { useEffect, useMemo, useState } from "react";
-import api from "../utils/api.js";
+import { supabase } from "../utils/supabaseClient";
 
-const KALUTARA_AREAS = [
-  "kalutara",
-  "panadura",
-  "beruwala",
-  "agalawatta",
-  "bulathsinhala",
-  "horana",
-  "mathugama",
-  "matugama",
-  "aluthgama",
-  "walana",
-  "payagala",
-  "molkawa",
-  "waskaduwa",
-  "halwatura",
-  "millawa",
-  "pinwatta",
-  "dodangoda",
-];
-
-function getMaterialScore(material) {
-  const value = String(material || "").trim().toLowerCase();
-
-  if (value === "hdpe") return 0.2;
-  if (value === "upvc" || value === "pvc") return 0.3;
-  if (value === "di") return 0.6;
-  if (value === "ci") return 0.8;
-  if (value === "steel") return 0.9;
-
-  return 0.5;
+function toNumber(value, fallback = null) {
+  if (value === null || value === undefined || value === "") return fallback;
+  const n = Number(String(value).replace(/,/g, ""));
+  return Number.isNaN(n) ? fallback : n;
 }
 
-function convertRainToScore(rainMm) {
-  const value = Number(rainMm || 0);
-
-  if (value <= 0) return 0.0;
-  if (value <= 2) return 0.2;
-  if (value <= 5) return 0.5;
-  if (value <= 10) return 0.8;
-  return 1.0;
+function getConditionScore(row) {
+  return toNumber(row["Condition Score"] ?? row.CONDITION_SCORE, null);
 }
 
-function getRainStatus(rainMm) {
-  const value = Number(rainMm || 0);
-
-  if (value <= 0) return "No rain";
-  if (value <= 2) return "Light rain";
-  if (value <= 5) return "Moderate rain";
-  if (value <= 10) return "Heavy rain";
-  return "Very heavy rain";
+function getCriticality(row) {
+  return toNumber(row.CRITICALITY, null);
 }
 
-function isKalutaraPipeline(pipeline) {
-  const text = `${pipeline.area_name || ""} ${pipeline.ds_division || ""}`.toLowerCase();
-  return KALUTARA_AREAS.some((area) => text.includes(area));
+function getPipeLength(row) {
+  return toNumber(row.Shape__Length, 0);
 }
 
-function getRiskBadgeClass(level) {
+function getPipeSize(row) {
+  return toNumber(row.PIPE_SIZE, 0);
+}
+
+function calculateDatasetRisk({ conditionScore, criticality }) {
+  if (conditionScore !== null) {
+    if (conditionScore <= 4) {
+      return {
+        level: "High",
+        score: 0.85,
+        reason: "Condition score is poor and requires immediate attention.",
+      };
+    }
+
+    if (conditionScore <= 7) {
+      return {
+        level: "Medium",
+        score: 0.55,
+        reason: "Condition score shows moderate deterioration.",
+      };
+    }
+
+    return {
+      level: "Low",
+      score: 0.2,
+      reason: "Condition score is healthy.",
+    };
+  }
+
+  if (criticality !== null) {
+    if (criticality >= 8) {
+      return {
+        level: "High",
+        score: 0.85,
+        reason: "Criticality is high and asset impact is significant.",
+      };
+    }
+
+    if (criticality >= 5) {
+      return {
+        level: "Medium",
+        score: 0.55,
+        reason: "Criticality indicates moderate operational importance.",
+      };
+    }
+
+    return {
+      level: "Low",
+      score: 0.2,
+      reason: "Criticality is low.",
+    };
+  }
+
+  return {
+    level: "Low",
+    score: 0.2,
+    reason: "No condition score or criticality available, defaulting to low risk.",
+  };
+}
+
+function getBadgeClass(level) {
   if (level === "High") return "calcBadgeHigh";
   if (level === "Medium") return "calcBadgeMedium";
   return "calcBadgeLow";
 }
 
-export default function RiskCalculator() {
-  const [allPipelines, setAllPipelines] = useState([]);
-  const [selectedPipelineId, setSelectedPipelineId] = useState("");
-  const [selectedPipeline, setSelectedPipeline] = useState(null);
+function getAction(level) {
+  if (level === "High") return "Immediate inspection and maintenance planning required.";
+  if (level === "Medium") return "Schedule preventive inspection in the next maintenance cycle.";
+  return "Continue routine monitoring.";
+}
 
-  const [liveRain, setLiveRain] = useState(null);
+export default function RiskCalculator() {
+  const [pipelines, setPipelines] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [manualMode, setManualMode] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [rainLoading, setRainLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [rainError, setRainError] = useState("");
+
+  const [manual, setManual] = useState({
+    conditionScore: "",
+    criticality: "",
+    material: "",
+    pipeSize: "",
+    length: "",
+    status: "ACTIVE",
+  });
 
   const [result, setResult] = useState(null);
 
   useEffect(() => {
-    async function fetchPipelines() {
-      try {
-        setLoading(true);
-        setError("");
+    async function loadPipelines() {
+      setLoading(true);
 
-        const res = await api.get("/pipelines-with-risk?limit=1000");
-        const data = Array.isArray(res.data) ? res.data : [];
-        setAllPipelines(data);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load pipeline records.");
-      } finally {
-        setLoading(false);
+      const { data, error } = await supabase
+        .from("pipelines")
+        .select("*")
+        .limit(1000);
+
+      if (error) {
+        console.error("Risk calculator fetch error:", error);
+        setPipelines([]);
+      } else {
+        setPipelines(data || []);
       }
+
+      setLoading(false);
     }
 
-    fetchPipelines();
+    loadPipelines();
   }, []);
 
   useEffect(() => {
-    async function fetchRain() {
-      try {
-        setRainLoading(true);
-        setRainError("");
+    if (!pipelines.length || selectedId) return;
 
-        const res = await api.get("/live-rain");
-        setLiveRain(res.data || null);
-      } catch (err) {
-        console.error(err);
-        setRainError("Failed to load live rain data.");
-      } finally {
-        setRainLoading(false);
-      }
-    }
+    const first = pipelines[0];
+    setSelectedId(String(first.WATMAINID || first.OBJECTID || ""));
+  }, [pipelines, selectedId]);
 
-    fetchRain();
-  }, []);
+  const selectedPipeline = useMemo(() => {
+    return (
+      pipelines.find(
+        (p) =>
+          String(p.WATMAINID) === String(selectedId) ||
+          String(p.OBJECTID) === String(selectedId)
+      ) || null
+    );
+  }, [pipelines, selectedId]);
 
-  const kalutaraPipelines = useMemo(() => {
-    return allPipelines.filter(isKalutaraPipeline);
-  }, [allPipelines]);
-
-  useEffect(() => {
-    if (!kalutaraPipelines.length) return;
-
-    if (!selectedPipelineId) {
-      setSelectedPipelineId(kalutaraPipelines[0].pipeline_id);
-      setSelectedPipeline(kalutaraPipelines[0]);
-      return;
-    }
-
-    const found =
-      kalutaraPipelines.find((p) => p.pipeline_id === selectedPipelineId) || null;
-    setSelectedPipeline(found);
-  }, [kalutaraPipelines, selectedPipelineId]);
-
-  const currentYear = new Date().getFullYear();
-
-  const pipelineValues = useMemo(() => {
-    if (!selectedPipeline) {
+  const selectedValues = useMemo(() => {
+    if (manualMode) {
       return {
-        pipelineAge: 0,
-        materialType: "",
-        leaks: 0,
-        repairs: 0,
-        areaName: "",
-        division: "",
+        id: "Manual Input",
+        status: manual.status || "ACTIVE",
+        material: manual.material || "Unknown",
+        pipeSize: toNumber(manual.pipeSize, 0),
+        length: toNumber(manual.length, 0),
+        conditionScore: toNumber(manual.conditionScore, null),
+        criticality: toNumber(manual.criticality, null),
+        pressureZone: "Manual",
+        category: "Manual Calculation",
       };
     }
 
-    const installYear = Number(selectedPipeline.install_year || currentYear);
-    const pipelineAge = Math.max(currentYear - installYear, 0);
+    if (!selectedPipeline) {
+      return {
+        id: "-",
+        status: "-",
+        material: "-",
+        pipeSize: 0,
+        length: 0,
+        conditionScore: null,
+        criticality: null,
+        pressureZone: "-",
+        category: "-",
+      };
+    }
 
     return {
-      pipelineAge,
-      materialType: selectedPipeline.material_type || "",
-      leaks: Number(selectedPipeline.previous_leak_count || 0),
-      repairs: Number(selectedPipeline.previous_repair_count || 0),
-      areaName: selectedPipeline.area_name || "-",
-      division: selectedPipeline.ds_division || "-",
+      id: selectedPipeline.WATMAINID || selectedPipeline.OBJECTID || "-",
+      status: selectedPipeline.STATUS || "-",
+      material: selectedPipeline.MATERIAL || "Unknown",
+      pipeSize: getPipeSize(selectedPipeline),
+      length: getPipeLength(selectedPipeline),
+      conditionScore: getConditionScore(selectedPipeline),
+      criticality: getCriticality(selectedPipeline),
+      pressureZone: selectedPipeline.PRESSURE_ZONE || "-",
+      category: selectedPipeline.CATEGORY || "-",
     };
-  }, [selectedPipeline, currentYear]);
+  }, [manualMode, manual, selectedPipeline]);
 
-  const calculateRisk = () => {
-    if (!selectedPipeline) return;
+  const datasetStats = useMemo(() => {
+    const high = pipelines.filter((p) => {
+      const r = calculateDatasetRisk({
+        conditionScore: getConditionScore(p),
+        criticality: getCriticality(p),
+      });
+      return r.level === "High";
+    }).length;
 
-    const ageScore = Math.min(pipelineValues.pipelineAge / 50, 1);
-    const materialScore = getMaterialScore(pipelineValues.materialType);
-    const incidentScore = Math.min(
-      (pipelineValues.leaks * 0.7 + pipelineValues.repairs * 0.3) / 10,
-      1
-    );
-    const rainMm = Number(liveRain?.rain_mm || 0);
-    const rainScore = convertRainToScore(rainMm);
+    const medium = pipelines.filter((p) => {
+      const r = calculateDatasetRisk({
+        conditionScore: getConditionScore(p),
+        criticality: getCriticality(p),
+      });
+      return r.level === "Medium";
+    }).length;
 
-    const riskScore =
-      0.35 * ageScore +
-      0.25 * materialScore +
-      0.25 * incidentScore +
-      0.15 * rainScore;
+    return {
+      total: pipelines.length,
+      high,
+      medium,
+    };
+  }, [pipelines]);
 
-    let riskLevel = "Low";
-    if (riskScore >= 0.7) riskLevel = "High";
-    else if (riskScore >= 0.4) riskLevel = "Medium";
+  function handleCalculate() {
+    const risk = calculateDatasetRisk({
+      conditionScore: selectedValues.conditionScore,
+      criticality: selectedValues.criticality,
+    });
+
+    const failureProbability = Math.round(risk.score * 100);
+    const risk30 = Math.min(0.99, risk.score + 0.04);
+    const risk90 = Math.min(0.99, risk.score + 0.1);
 
     setResult({
-      pipelineId: selectedPipeline.pipeline_id,
-      areaName: pipelineValues.areaName,
-      division: pipelineValues.division,
-      ageScore: ageScore.toFixed(3),
-      materialScore: materialScore.toFixed(3),
-      incidentScore: incidentScore.toFixed(3),
-      rainScore: rainScore.toFixed(3),
-      riskScore: riskScore.toFixed(3),
-      riskLevel,
-      rainStatus: getRainStatus(rainMm),
+      ...selectedValues,
+      riskLevel: risk.level,
+      riskScore: risk.score,
+      failureProbability,
+      risk30,
+      risk90,
+      reason: risk.reason,
+      action: getAction(risk.level),
     });
-  };
+  }
 
   return (
     <div className="calcPageWrap">
-      <div className="calcCardCompact">
-        <div className="calcHeaderCompact">
-          <div>
-            <h2>Kalutara Pipeline Risk Calculator</h2>
-            <p>Select a real Kalutara pipeline and calculate its current risk score.</p>
-          </div>
-
-          <div className="calcTopStats">
-            <div className="calcMiniStat">
-              <span>Pipelines</span>
-              <strong>{loading ? "..." : kalutaraPipelines.length}</strong>
-            </div>
-            <div className="calcMiniStat">
-              <span>Live Rain</span>
-              <strong>
-                {rainLoading ? "..." : `${Number(liveRain?.rain_mm || 0).toFixed(1)} mm`}
-              </strong>
-            </div>
-          </div>
+      <div className="calcHero">
+        <div>
+          <div className="heroEyebrow">Dataset Risk Engine</div>
+          <h1>Water Main Risk Calculator</h1>
+          <p>
+            Calculate risk using real Waterloo/Kitchener dataset fields: Condition Score first,
+            then Criticality as fallback.
+          </p>
         </div>
 
-        {loading ? (
-          <div className="calcInfoBar">Loading Kalutara pipeline records...</div>
-        ) : error ? (
-          <div className="calcInfoBar calcErrorText">{error}</div>
-        ) : (
-          <>
-            <div className="calcInfoGrid">
-              <div className="calcInfoItem">
-                <span>District</span>
-                <strong>Kalutara</strong>
-              </div>
-              <div className="calcInfoItem">
-                <span>Rain Status</span>
-                <strong>{rainLoading ? "Loading..." : getRainStatus(liveRain?.rain_mm || 0)}</strong>
-              </div>
-              <div className="calcInfoItem">
-                <span>Rain Score</span>
-                <strong>{rainLoading ? "..." : Number(liveRain?.rain_score || 0).toFixed(2)}</strong>
-              </div>
-              <div className="calcInfoItem">
-                <span>Updated</span>
-                <strong>{rainLoading ? "..." : liveRain?.updated_time || "-"}</strong>
-              </div>
-            </div>
-
-            {rainError ? <div className="calcInfoBar calcErrorText">{rainError}</div> : null}
-
-            <div className="calcMainGrid">
-              <div className="calcFormCompact">
-                <div className="calcFieldFull">
-                  <label>Select Pipeline</label>
-                  <select
-                    value={selectedPipelineId}
-                    onChange={(e) => setSelectedPipelineId(e.target.value)}
-                  >
-                    {kalutaraPipelines.map((pipeline) => (
-                      <option key={pipeline.pipeline_id} value={pipeline.pipeline_id}>
-                        {pipeline.pipeline_id} - {pipeline.area_name || pipeline.ds_division || "Unknown Area"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label>Area</label>
-                  <input type="text" value={pipelineValues.areaName} readOnly />
-                </div>
-
-                <div>
-                  <label>Division</label>
-                  <input type="text" value={pipelineValues.division} readOnly />
-                </div>
-
-                <div>
-                  <label>Pipe Age (years)</label>
-                  <input type="text" value={pipelineValues.pipelineAge} readOnly />
-                </div>
-
-                <div>
-                  <label>Material Type</label>
-                  <input type="text" value={pipelineValues.materialType} readOnly />
-                </div>
-
-                <div>
-                  <label>Previous Leak Count</label>
-                  <input type="text" value={pipelineValues.leaks} readOnly />
-                </div>
-
-                <div>
-                  <label>Previous Repair Count</label>
-                  <input type="text" value={pipelineValues.repairs} readOnly />
-                </div>
-
-                <div className="calcFieldFull">
-                  <label>Live Rainfall (mm)</label>
-                  <input
-                    type="text"
-                    value={rainLoading ? "Loading..." : Number(liveRain?.rain_mm || 0).toFixed(1)}
-                    readOnly
-                  />
-                </div>
-
-                <div className="calcFieldFull">
-                  <button
-                    onClick={calculateRisk}
-                    disabled={!selectedPipeline || rainLoading}
-                    className="calcButtonCompact"
-                  >
-                    Calculate Risk
-                  </button>
-                </div>
-              </div>
-
-              <div className="calcResultCompact">
-                <div className="calcResultHeader">
-                  <h3>Calculation Result</h3>
-                  {result ? (
-                    <span className={`calcRiskBadge ${getRiskBadgeClass(result.riskLevel)}`}>
-                      {result.riskLevel}
-                    </span>
-                  ) : null}
-                </div>
-
-                {!result ? (
-                  <div className="calcResultPlaceholder">
-                    Select a pipeline and click <b>Calculate Risk</b> to view the score breakdown.
-                  </div>
-                ) : (
-                  <div className="calcResultList">
-                    <div className="calcResultRow">
-                      <span>Pipeline ID</span>
-                      <strong>{result.pipelineId}</strong>
-                    </div>
-                    <div className="calcResultRow">
-                      <span>Area</span>
-                      <strong>{result.areaName}</strong>
-                    </div>
-                    <div className="calcResultRow">
-                      <span>Division</span>
-                      <strong>{result.division}</strong>
-                    </div>
-                    <div className="calcResultRow">
-                      <span>Age Score</span>
-                      <strong>{result.ageScore}</strong>
-                    </div>
-                    <div className="calcResultRow">
-                      <span>Material Score</span>
-                      <strong>{result.materialScore}</strong>
-                    </div>
-                    <div className="calcResultRow">
-                      <span>Incident Score</span>
-                      <strong>{result.incidentScore}</strong>
-                    </div>
-                    <div className="calcResultRow">
-                      <span>Rain Score</span>
-                      <strong>{result.rainScore}</strong>
-                    </div>
-                    <div className="calcResultRow">
-                      <span>Rain Status</span>
-                      <strong>{result.rainStatus}</strong>
-                    </div>
-                    <div className="calcResultRow calcResultFinal">
-                      <span>Final Risk Score</span>
-                      <strong>{result.riskScore}</strong>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
+        <div className="calcHeroStats">
+          <MiniStat label="Assets" value={loading ? "..." : datasetStats.total} />
+          <MiniStat label="High Risk" value={datasetStats.high} tone="danger" />
+          <MiniStat label="Medium Risk" value={datasetStats.medium} tone="warn" />
+        </div>
       </div>
+
+      <div className="calcShell">
+        <div className="calcInputPanel">
+          <div className="calcModeSwitch">
+            <button
+              className={!manualMode ? "active" : ""}
+              onClick={() => {
+                setManualMode(false);
+                setResult(null);
+              }}
+            >
+              Select Dataset Pipeline
+            </button>
+            <button
+              className={manualMode ? "active" : ""}
+              onClick={() => {
+                setManualMode(true);
+                setResult(null);
+              }}
+            >
+              Manual Calculation
+            </button>
+          </div>
+
+          {!manualMode ? (
+            <>
+              <label className="calcField full">
+                Select Pipeline
+                <select
+                  value={selectedId}
+                  onChange={(e) => {
+                    setSelectedId(e.target.value);
+                    setResult(null);
+                  }}
+                >
+                  {pipelines.map((p) => (
+                    <option key={p.OBJECTID || p.WATMAINID} value={p.WATMAINID || p.OBJECTID}>
+                      {p.WATMAINID || p.OBJECTID} • {p.MATERIAL || "Unknown"} •{" "}
+                      {p.PIPE_SIZE || p.MAP_LABEL || "N/A"} • {p.PRESSURE_ZONE || "Zone N/A"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {loading ? (
+                <div className="calcInfoBox">Loading pipeline records...</div>
+              ) : (
+                <PipelinePreview values={selectedValues} />
+              )}
+            </>
+          ) : (
+            <div className="manualGrid">
+              <label className="calcField">
+                Condition Score
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  placeholder="Example: 4"
+                  value={manual.conditionScore}
+                  onChange={(e) =>
+                    setManual((p) => ({ ...p, conditionScore: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="calcField">
+                Criticality
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  placeholder="Example: 8"
+                  value={manual.criticality}
+                  onChange={(e) =>
+                    setManual((p) => ({ ...p, criticality: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="calcField">
+                Material
+                <input
+                  placeholder="Example: DI"
+                  value={manual.material}
+                  onChange={(e) =>
+                    setManual((p) => ({ ...p, material: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="calcField">
+                Pipe Size
+                <input
+                  type="number"
+                  placeholder="Example: 150"
+                  value={manual.pipeSize}
+                  onChange={(e) =>
+                    setManual((p) => ({ ...p, pipeSize: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="calcField">
+                Length
+                <input
+                  type="number"
+                  placeholder="Shape Length"
+                  value={manual.length}
+                  onChange={(e) =>
+                    setManual((p) => ({ ...p, length: e.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="calcField">
+                Status
+                <select
+                  value={manual.status}
+                  onChange={(e) =>
+                    setManual((p) => ({ ...p, status: e.target.value }))
+                  }
+                >
+                  <option>ACTIVE</option>
+                  <option>ABANDONED</option>
+                  <option>RETIRED</option>
+                  <option>UNKNOWN</option>
+                </select>
+              </label>
+            </div>
+          )}
+
+          <div className="ruleCard">
+            <h3>Risk Rule</h3>
+            <div className="ruleGrid">
+              <span>Condition ≤ 4</span>
+              <b className="dangerText">High</b>
+              <span>Condition ≤ 7</span>
+              <b className="warnText">Medium</b>
+              <span>Condition &gt; 7</span>
+              <b className="okText">Low</b>
+              <span>Criticality ≥ 8</span>
+              <b className="dangerText">High</b>
+              <span>Criticality ≥ 5</span>
+              <b className="warnText">Medium</b>
+            </div>
+          </div>
+
+          <button
+            className="calculateBtn"
+            onClick={handleCalculate}
+            disabled={loading && !manualMode}
+          >
+            Calculate Risk
+          </button>
+        </div>
+
+        <div className="calcResultPanel">
+          {!result ? (
+            <div className="resultPlaceholder">
+              <div className="placeholderIcon">🧮</div>
+              <h2>Ready to calculate</h2>
+              <p>Select a pipeline or enter manual values, then click Calculate Risk.</p>
+            </div>
+          ) : (
+            <>
+              <div className="resultTop">
+                <div>
+                  <p>Risk Result</p>
+                  <h2>{result.riskLevel}</h2>
+                </div>
+
+                <span className={`calcRiskBadge ${getBadgeClass(result.riskLevel)}`}>
+                  {result.riskLevel}
+                </span>
+              </div>
+
+              <div className="scoreCircle">
+                <div>
+                  <strong>{Math.round(result.riskScore * 100)}%</strong>
+                  <span>Risk Score</span>
+                </div>
+              </div>
+
+              <div className="resultRows">
+                <ResultRow label="Pipeline ID" value={result.id} />
+                <ResultRow label="Material" value={result.material} />
+                <ResultRow label="Pipe Size" value={result.pipeSize || "N/A"} />
+                <ResultRow label="Length" value={result.length ? `${result.length.toFixed(1)} m` : "N/A"} />
+                <ResultRow label="Condition Score" value={result.conditionScore ?? "N/A"} />
+                <ResultRow label="Criticality" value={result.criticality ?? "N/A"} />
+                <ResultRow label="Failure Probability" value={`${result.failureProbability}%`} />
+                <ResultRow label="30 Day Risk" value={result.risk30.toFixed(2)} />
+                <ResultRow label="90 Day Risk" value={result.risk90.toFixed(2)} />
+              </div>
+
+              <div className="recommendBox">
+                <h3>Recommendation</h3>
+                <p>{result.reason}</p>
+                <b>{result.action}</b>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <style>{`
+        .calcPageWrap {
+          width: 100%;
+          padding: 28px;
+          animation: fadeIn 0.35s ease;
+        }
+
+        .calcHero {
+          background: linear-gradient(135deg, #ffffff, #eef8fc, #dff2fa);
+          border: 1px solid #c8e3ef;
+          border-radius: 22px;
+          padding: 28px;
+          display: flex;
+          justify-content: space-between;
+          gap: 20px;
+          margin-bottom: 22px;
+          box-shadow: 0 12px 30px rgba(20, 65, 90, 0.08);
+        }
+
+        .heroEyebrow {
+          display: inline-block;
+          background: #e2f4fb;
+          color: #0b6fa4;
+          border: 1px solid #b9ddeb;
+          font-weight: 900;
+          font-size: 12px;
+          letter-spacing: 1px;
+          padding: 7px 12px;
+          border-radius: 999px;
+          text-transform: uppercase;
+          margin-bottom: 10px;
+        }
+
+        .calcHero h1 {
+          margin: 0;
+          font-size: 30px;
+          color: #123047;
+        }
+
+        .calcHero p {
+          margin: 8px 0 0;
+          max-width: 720px;
+          color: #5f7688;
+          font-weight: 600;
+          line-height: 1.6;
+        }
+
+        .calcHeroStats {
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+
+        .miniStat {
+          min-width: 120px;
+          background: white;
+          border: 1px solid #d7e6ef;
+          border-radius: 16px;
+          padding: 14px;
+          box-shadow: 0 8px 22px rgba(20, 65, 90, 0.06);
+        }
+
+        .miniStat span {
+          display: block;
+          color: #5f7688;
+          font-size: 12px;
+          font-weight: 900;
+          margin-bottom: 6px;
+        }
+
+        .miniStat strong {
+          color: #123047;
+          font-size: 24px;
+          font-weight: 950;
+        }
+
+        .miniStat.danger strong {
+          color: #dc2626;
+        }
+
+        .miniStat.warn strong {
+          color: #d97706;
+        }
+
+        .calcShell {
+          display: grid;
+          grid-template-columns: 1.15fr 0.85fr;
+          gap: 22px;
+        }
+
+        .calcInputPanel,
+        .calcResultPanel {
+          background: white;
+          border: 1px solid #d7e6ef;
+          border-radius: 22px;
+          padding: 22px;
+          box-shadow: 0 10px 26px rgba(20, 65, 90, 0.08);
+        }
+
+        .calcModeSwitch {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          margin-bottom: 18px;
+          background: #f6fafc;
+          border: 1px solid #d7e6ef;
+          padding: 6px;
+          border-radius: 16px;
+        }
+
+        .calcModeSwitch button {
+          border: none;
+          border-radius: 12px;
+          background: transparent;
+          color: #5f7688;
+          font-weight: 900;
+          height: 42px;
+          cursor: pointer;
+        }
+
+        .calcModeSwitch button.active {
+          background: #0b6fa4;
+          color: white;
+          box-shadow: 0 8px 20px rgba(11, 111, 164, 0.18);
+        }
+
+        .calcField {
+          display: grid;
+          gap: 7px;
+          color: #31546a;
+          font-size: 13px;
+          font-weight: 900;
+        }
+
+        .calcField.full {
+          margin-bottom: 18px;
+        }
+
+        .calcField input,
+        .calcField select {
+          height: 46px;
+          border: 1px solid #cbdde7;
+          border-radius: 12px;
+          padding: 0 14px;
+          background: white;
+          color: #123047;
+          font-weight: 700;
+        }
+
+        .manualGrid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 14px;
+        }
+
+        .previewGrid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 12px;
+          margin-bottom: 18px;
+        }
+
+        .previewItem {
+          background: #f6fafc;
+          border: 1px solid #d7e6ef;
+          border-radius: 16px;
+          padding: 14px;
+        }
+
+        .previewItem span {
+          display: block;
+          color: #5f7688;
+          font-size: 12px;
+          font-weight: 900;
+          margin-bottom: 6px;
+        }
+
+        .previewItem strong {
+          color: #123047;
+          font-size: 15px;
+          font-weight: 950;
+        }
+
+        .calcInfoBox {
+          background: #f6fafc;
+          border: 1px dashed #b9ddeb;
+          border-radius: 16px;
+          padding: 20px;
+          color: #5f7688;
+          font-weight: 900;
+          text-align: center;
+        }
+
+        .ruleCard {
+          margin-top: 18px;
+          background: #f6fafc;
+          border: 1px solid #d7e6ef;
+          border-radius: 18px;
+          padding: 16px;
+        }
+
+        .ruleCard h3 {
+          margin: 0 0 12px;
+          color: #123047;
+        }
+
+        .ruleGrid {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          gap: 9px 14px;
+          color: #5f7688;
+          font-size: 13px;
+          font-weight: 800;
+        }
+
+        .dangerText {
+          color: #dc2626;
+        }
+
+        .warnText {
+          color: #d97706;
+        }
+
+        .okText {
+          color: #16875d;
+        }
+
+        .calculateBtn {
+          margin-top: 18px;
+          width: 100%;
+          height: 50px;
+          border: none;
+          border-radius: 14px;
+          background: #0b6fa4;
+          color: white;
+          font-size: 16px;
+          font-weight: 950;
+          cursor: pointer;
+          box-shadow: 0 8px 20px rgba(11, 111, 164, 0.2);
+        }
+
+        .calculateBtn:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+
+        .calcResultPanel {
+          min-height: 520px;
+        }
+
+        .resultPlaceholder {
+          height: 100%;
+          min-height: 480px;
+          display: grid;
+          place-items: center;
+          text-align: center;
+          align-content: center;
+          color: #5f7688;
+        }
+
+        .placeholderIcon {
+          font-size: 52px;
+          margin-bottom: 12px;
+        }
+
+        .resultPlaceholder h2 {
+          margin: 0;
+          color: #123047;
+        }
+
+        .resultPlaceholder p {
+          max-width: 320px;
+          line-height: 1.6;
+          font-weight: 600;
+        }
+
+        .resultTop {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          align-items: flex-start;
+        }
+
+        .resultTop p {
+          margin: 0;
+          color: #5f7688;
+          font-weight: 900;
+        }
+
+        .resultTop h2 {
+          margin: 6px 0 0;
+          font-size: 36px;
+          color: #123047;
+        }
+
+        .calcRiskBadge {
+          color: white;
+          border-radius: 999px;
+          padding: 8px 14px;
+          font-size: 12px;
+          font-weight: 950;
+        }
+
+        .calcBadgeHigh {
+          background: #dc2626;
+        }
+
+        .calcBadgeMedium {
+          background: #d97706;
+        }
+
+        .calcBadgeLow {
+          background: #16875d;
+        }
+
+        .scoreCircle {
+          width: 170px;
+          height: 170px;
+          border-radius: 50%;
+          margin: 24px auto;
+          display: grid;
+          place-items: center;
+          background:
+            radial-gradient(circle at center, white 52%, transparent 53%),
+            conic-gradient(#0b6fa4 calc(var(--score, 70) * 1%), #dfeaf0 0);
+          border: 1px solid #d7e6ef;
+        }
+
+        .scoreCircle strong {
+          display: block;
+          color: #123047;
+          font-size: 34px;
+          font-weight: 950;
+          text-align: center;
+        }
+
+        .scoreCircle span {
+          display: block;
+          color: #5f7688;
+          font-size: 12px;
+          font-weight: 900;
+          text-align: center;
+        }
+
+        .resultRows {
+          display: grid;
+          gap: 10px;
+        }
+
+        .resultRow {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          padding-bottom: 9px;
+          border-bottom: 1px solid #e4edf3;
+        }
+
+        .resultRow span {
+          color: #5f7688;
+          font-weight: 800;
+        }
+
+        .resultRow strong {
+          color: #123047;
+          text-align: right;
+        }
+
+        .recommendBox {
+          margin-top: 18px;
+          background: #eef8fc;
+          border: 1px solid #c8e3ef;
+          border-radius: 16px;
+          padding: 16px;
+        }
+
+        .recommendBox h3 {
+          margin: 0 0 8px;
+          color: #123047;
+        }
+
+        .recommendBox p {
+          margin: 0 0 10px;
+          color: #5f7688;
+          font-weight: 700;
+          line-height: 1.5;
+        }
+
+        .recommendBox b {
+          color: #0b6fa4;
+        }
+
+        @media (max-width: 1150px) {
+          .calcShell {
+            grid-template-columns: 1fr;
+          }
+
+          .previewGrid {
+            grid-template-columns: 1fr 1fr;
+          }
+        }
+
+        @media (max-width: 780px) {
+          .calcPageWrap {
+            padding: 18px;
+          }
+
+          .calcHero {
+            display: grid;
+          }
+
+          .calcHeroStats {
+            justify-content: flex-start;
+          }
+
+          .manualGrid,
+          .previewGrid,
+          .calcModeSwitch {
+            grid-template-columns: 1fr;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function MiniStat({ label, value, tone = "" }) {
+  return (
+    <div className={`miniStat ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function PipelinePreview({ values }) {
+  return (
+    <div className="previewGrid">
+      <PreviewItem label="Pipeline ID" value={values.id} />
+      <PreviewItem label="Status" value={values.status} />
+      <PreviewItem label="Material" value={values.material} />
+      <PreviewItem label="Pipe Size" value={values.pipeSize || "N/A"} />
+      <PreviewItem
+        label="Length"
+        value={values.length ? `${values.length.toFixed(1)} m` : "N/A"}
+      />
+      <PreviewItem label="Pressure Zone" value={values.pressureZone} />
+      <PreviewItem label="Category" value={values.category} />
+      <PreviewItem label="Condition Score" value={values.conditionScore ?? "N/A"} />
+      <PreviewItem label="Criticality" value={values.criticality ?? "N/A"} />
+    </div>
+  );
+}
+
+function PreviewItem({ label, value }) {
+  return (
+    <div className="previewItem">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ResultRow({ label, value }) {
+  return (
+    <div className="resultRow">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
