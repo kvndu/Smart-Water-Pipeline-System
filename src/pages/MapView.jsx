@@ -711,38 +711,6 @@ export default function MapView() {
                 pipeline={selectedPipeline}
                 onClear={() => setSelectedPipelineId(null)}
               />
-
-              <div className="card card-pad">
-                <div className="sectionHeader">
-                  <div>
-                    <div className="sectionTitle">Why this version is better</div>
-                    <div className="sectionSubtitle">
-                      Cleaner and more realistic than straight random line rendering.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="vstack">
-                  <div className="detailItem">
-                    <div className="detailLabel">Structured routes</div>
-                    <div className="detailValue">
-                      Curved paths create a more natural network pattern instead of short artificial straight strokes.
-                    </div>
-                  </div>
-                  <div className="detailItem">
-                    <div className="detailLabel">Main vs branch lines</div>
-                    <div className="detailValue">
-                      Larger-diameter or longer assets appear as primary routes, improving hierarchy and readability.
-                    </div>
-                  </div>
-                  <div className="detailItem">
-                    <div className="detailLabel">Operational focus</div>
-                    <div className="detailValue">
-                      Selecting one asset highlights it and fades others, similar to a real inspection workflow.
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
 

@@ -22,10 +22,14 @@ function NavItem({ to, iconSrc, label, badge }) {
 export default function Sidebar({ alertsCount = 0 }) {
   const navigate = useNavigate();
 
+  const role = localStorage.getItem("waterflow_role");
+  const isAdmin = role === "Administrator";
+
   const handleLogout = () => {
     localStorage.removeItem("waterflow_auth");
     localStorage.removeItem("waterflow_role");
-    navigate("/login");
+    localStorage.removeItem("waterflow_user");
+    navigate("/login", { replace: true });
   };
 
   return (
@@ -33,83 +37,123 @@ export default function Sidebar({ alertsCount = 0 }) {
       <div className="brand">
         <img
           src="/icons/water_treatment.png"
-          alt="WaterFlow logo"
+          alt="PipeGuard logo"
           className="brandLogo"
         />
 
         <div className="brandText">
-          <div className="brandTitle">WaterFlow</div>
-          <div className="brandSub">Smart pipeline system</div>
+          <div className="brandTitle">PipeGuard</div>
+          <div className="brandSub">
+            {isAdmin ? "Admin control system" : "Smart pipeline system"}
+          </div>
         </div>
       </div>
 
-      <div className="navSectionTitle">MAIN NAVIGATION</div>
+      <div className="navSectionTitle">
+        {isAdmin ? "ADMIN NAVIGATION" : "MAIN NAVIGATION"}
+      </div>
 
       <nav className="navMenu">
-        <NavItem
-          to="/dashboard"
-          iconSrc="/icons/dashboard.svg"
-          label="Overview Dashboard"
-        />
+        {isAdmin ? (
+          <>
+            <NavItem
+              to="/admin-dashboard"
+              iconSrc="/icons/dashboard.svg"
+              label="Admin Dashboard"
+            />
 
-        <NavItem
-          to="/pipelines"
-          iconSrc="/icons/pipeline.svg"
-          label="Pipeline Records"
-        />
+            <NavItem
+              to="/engineer-management"
+              iconSrc="/icons/pipeline.svg"
+              label="Engineer Management"
+            />
 
-        <NavItem
-          to="/alerts"
-          iconSrc="/icons/alerts.svg"
-          label="Alerts Center"
-          badge={alertsCount > 0 ? alertsCount : null}
-        />
+            <NavItem
+              to="/system-issues"
+              iconSrc="/icons/maintenance.svg"
+              label="System Issues"
+           />
 
-        <NavItem
-          to="/maintenance"
-          iconSrc="/icons/maintenance.svg"
-          label="Maintenance"
-        />
+           <NavItem
+              to="/access-control"
+              iconSrc="/icons/decision.svg"
+              label="Access Control"
+           />
 
-        <NavItem
-          to="/risk-calculator"
-          iconSrc="/icons/risk-calculator.svg"
-          label="Risk Calculator"
-        />
+           <NavItem
+              to="/audit-logs"
+              iconSrc="/icons/reports.svg"
+              label="Audit Logs"
+           />
+          </>
+        ) : (
+          <>
+            <NavItem
+              to="/dashboard"
+              iconSrc="/icons/dashboard.svg"
+              label="Overview Dashboard"
+            />
 
-        <NavItem
-          to="/map-view"
-          iconSrc="/icons/map-view.svg"
-          label="Map View"
-        />
+            <NavItem
+              to="/pipelines"
+              iconSrc="/icons/pipeline.svg"
+              label="Pipeline Records"
+            />
 
-        <NavItem
-          to="/pipeline-network"
-          iconSrc="/icons/pipeline-network.svg"
-          label="Pipeline Network"
-        />
+            <NavItem
+              to="/alerts"
+              iconSrc="/icons/alerts.svg"
+              label="Alerts Center"
+              badge={alertsCount > 0 ? alertsCount : null}
+            />
 
-        <div className="navSectionTitle" style={{ marginTop: 18 }}>
-          ANALYSIS
-        </div>
+            <NavItem
+              to="/maintenance"
+              iconSrc="/icons/maintenance.svg"
+              label="Maintenance"
+            />
 
-        <NavItem
-          to="/analytics"
-          iconSrc="/icons/analytics.svg"
-          label="Analytics"
-        />
+            <NavItem
+              to="/risk-calculator"
+              iconSrc="/icons/risk-calculator.svg"
+              label="Risk Calculator"
+            />
 
-        <NavItem
-          to="/reports"
-          iconSrc="/icons/reports.svg"
-          label="Reports"
-        />
+            <NavItem
+              to="/map-view"
+              iconSrc="/icons/map-view.svg"
+              label="Map View"
+            />
 
-        <NavItem
-          to="/decision-hub"
-          iconSrc="/icons/decision.svg"
-          label="Decision Hub"
-        />
+            <NavItem
+              to="/pipeline-network"
+              iconSrc="/icons/pipeline-network.svg"
+              label="Pipeline Network"
+            />
+
+            <div className="navSectionTitle" style={{ marginTop: 18 }}>
+              ANALYSIS
+            </div>
+
+            <NavItem
+              to="/analytics"
+              iconSrc="/icons/analytics.svg"
+              label="Analytics"
+            />
+
+            <NavItem
+              to="/reports"
+              iconSrc="/icons/reports.svg"
+              label="Reports"
+            />
+
+            <NavItem
+              to="/decision-hub"
+              iconSrc="/icons/decision.svg"
+              label="Decision Hub"
+            />
+          </>
+        )}
       </nav>
 
       <div className="sidebarFooter">

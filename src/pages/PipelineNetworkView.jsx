@@ -386,38 +386,6 @@ export default function PipelineNetworkView() {
                   </div>
                 )}
               </div>
-
-              <div className="card card-pad">
-                <div className="sectionHeader">
-                  <div>
-                    <div className="sectionTitle">Why this view matters</div>
-                    <div className="sectionSubtitle">
-                      Strong explanation for presentation and viva.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="vstack">
-                  <div className="detailItem">
-                    <div className="detailLabel">Purpose</div>
-                    <div className="detailValue">
-                      This page shows the Kalutara water pipeline system as a network blueprint.
-                    </div>
-                  </div>
-                  <div className="detailItem">
-                    <div className="detailLabel">Benefit</div>
-                    <div className="detailValue">
-                      Engineers can quickly identify risky pipeline links and network zones.
-                    </div>
-                  </div>
-                  <div className="detailItem">
-                    <div className="detailLabel">Visualization style</div>
-                    <div className="detailValue">
-                      Schematic network view based on district areas and pipeline records.
-                    </div>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </>

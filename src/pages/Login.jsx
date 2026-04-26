@@ -1,210 +1,331 @@
-import { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-export default function Login() {
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("");
-    const [role, setRole] = useState("Engineer");
-    const [error, setError] = useState("");
-    const [loading, setLoading] = useState(false);
-    const navigate = useNavigate();
+const Login = () => {
+  const navigate = useNavigate();
 
-    useEffect(() => {
-        // If already logged in, redirect
-        if (localStorage.getItem("waterflow_auth") === "true") {
-            navigate("/dashboard");
-        }
-    }, [navigate]);
+  const [role, setRole] = useState("engineer");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
-    const handleLogin = (e) => {
-        e.preventDefault();
-        setError("");
+  useEffect(() => {
+    const isAuth = localStorage.getItem("waterflow_auth") === "true";
+    const savedRole = localStorage.getItem("waterflow_role");
 
-        if (!email || !password) {
-            setError("Please enter both email and password.");
-            return;
-        }
+    if (isAuth && savedRole === "Administrator") {
+      navigate("/admin-dashboard", { replace: true });
+    } else if (isAuth) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [navigate]);
 
-        setLoading(true);
+  const handleLogin = (e) => {
+    e.preventDefault();
 
-        // Simulate network delay
-        setTimeout(() => {
-            localStorage.setItem("waterflow_auth", "true");
-            localStorage.setItem("waterflow_role", role);
-            navigate("/dashboard");
-        }, 1200);
+    const accounts = {
+      engineer: {
+        email: "engineer@waterflow.com",
+        password: "engineer123",
+        roleName: "Engineer",
+        userName: "Field Engineer",
+        redirectPath: "/dashboard",
+      },
+      admin: {
+        email: "admin@waterflow.com",
+        password: "admin123",
+        roleName: "Administrator",
+        userName: "System Admin",
+        redirectPath: "/admin-dashboard",
+      },
     };
 
-    return (
-        <div className="loginWrapper">
-            <div className="loginLeft">
-                <div className="loginBrand">
-                    <span style={{ fontSize: "32px", marginRight: "12px" }}>💧</span>
-                    <div>
-                        <div style={{ fontSize: "28px", fontWeight: 900, color: "#fff", lineHeight: 1 }}>WaterFlow</div>
-                        <div style={{ fontSize: "14px", color: "#cbd5e1", marginTop: "4px" }}>Smart Pipeline System</div>
-                    </div>
-                </div>
-                <div className="loginShowcase">
-                    <div style={{ fontSize: "42px", fontWeight: 900, marginBottom: "16px", lineHeight: "1.2" }}>
-                        Secure.<br />Intelligent.<br />Monitoring.
-                    </div>
-                    <div style={{ fontSize: "16px", color: "#94a3b8", maxWidth: "340px", lineHeight: "1.6" }}>
-                        Real-time analytics, automated preventive maintenance, and robust data management for municipal pipeline infrastructure.
-                    </div>
-                </div>
-            </div>
+    const selectedAccount = accounts[role];
 
-            <div className="loginRight">
-                <div className="loginCard">
-                    <div style={{ textAlign: "center", marginBottom: "32px" }}>
-                        <div style={{ fontSize: "24px", fontWeight: 900, color: "var(--text)" }}>Welcome Back</div>
-                        <div style={{ fontSize: "14px", color: "var(--muted)", marginTop: "6px" }}>
-                            Sign in to manage the continuous flow.
-                        </div>
-                    </div>
+    if (
+      email.trim().toLowerCase() === selectedAccount.email &&
+      password === selectedAccount.password
+    ) {
+      localStorage.setItem("waterflow_auth", "true");
+      localStorage.setItem("waterflow_role", selectedAccount.roleName);
+      localStorage.setItem("waterflow_user", selectedAccount.userName);
 
-                    <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                        <div>
-                            <label style={{ display: "block", fontSize: "13px", fontWeight: 800, marginBottom: "8px", color: "var(--text)" }}>
-                                User Role
-                            </label>
-                            <div style={{ display: "flex", gap: "10px" }}>
-                                <button
-                                    type="button"
-                                    onClick={() => setRole("Engineer")}
-                                    style={{
-                                        flex: 1, padding: "10px", borderRadius: "10px", fontSize: "14px", fontWeight: 800,
-                                        cursor: "pointer", transition: "all 0.2s",
-                                        border: role === "Engineer" ? "2px solid var(--primary)" : "2px solid #e2e8f0",
-                                        background: role === "Engineer" ? "#eff6ff" : "transparent",
-                                        color: role === "Engineer" ? "var(--primary)" : "var(--muted)"
-                                    }}
-                                >
-                                    🛠️ Engineer
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setRole("Administrator")}
-                                    style={{
-                                        flex: 1, padding: "10px", borderRadius: "10px", fontSize: "14px", fontWeight: 800,
-                                        cursor: "pointer", transition: "all 0.2s",
-                                        border: role === "Administrator" ? "2px solid var(--primary)" : "2px solid #e2e8f0",
-                                        background: role === "Administrator" ? "#eff6ff" : "transparent",
-                                        color: role === "Administrator" ? "var(--primary)" : "var(--muted)"
-                                    }}
-                                >
-                                    🛡️ Admin
-                                </button>
-                            </div>
-                        </div>
+      navigate(selectedAccount.redirectPath, { replace: true });
+    } else {
+      alert(`Invalid ${selectedAccount.roleName} email or password`);
+    }
+  };
 
-                        <div>
-                            <label style={{ display: "block", fontSize: "13px", fontWeight: 800, marginBottom: "8px", color: "var(--text)" }}>
-                                Email Address
-                            </label>
-                            <input
-                                type="email"
-                                placeholder="Ex: ops@waterflow.com"
-                                className="input"
-                                style={{ width: "100%", padding: "14px", fontSize: "14px" }}
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                            />
-                        </div>
+  const handleForgotPassword = () => {
+    alert("Password reset verification sent to your email.");
+  };
 
-                        <div>
-                            <label style={{ display: "block", fontSize: "13px", fontWeight: 800, marginBottom: "8px", color: "var(--text)" }}>
-                                Password
-                            </label>
-                            <input
-                                type="password"
-                                placeholder="Enter your security token"
-                                className="input"
-                                style={{ width: "100%", padding: "14px", fontSize: "14px" }}
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                            />
-                        </div>
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        backgroundImage:
+          'linear-gradient(90deg, rgba(2,6,23,0.88) 0%, rgba(2,6,23,0.72) 45%, rgba(2,6,23,0.55) 100%), url("https://www.dwi.gov.uk/wp-content/uploads/2020/10/mini_Blue-pipes-01.jpg")',
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        display: "flex",
+        alignItems: "center",
+        padding: "70px 90px",
+        boxSizing: "border-box",
+        fontFamily: "Inter, Arial, sans-serif",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          display: "grid",
+          gridTemplateColumns: "1.1fr 420px",
+          alignItems: "center",
+          gap: "80px",
+        }}
+      >
+        <div style={{ color: "#ffffff", maxWidth: "680px" }}>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "10px",
+              padding: "10px 18px",
+              border: "1px solid rgba(255,255,255,0.25)",
+              borderRadius: "999px",
+              background: "rgba(255,255,255,0.08)",
+              marginBottom: "28px",
+              fontSize: "14px",
+              fontWeight: "600",
+            }}
+          >
+            <span>💧</span>
+            Intelligent Water Infrastructure
+          </div>
 
-                        {error && (
-                            <div style={{ padding: "10px 14px", background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "8px", fontSize: "13px", fontWeight: 700 }}>
-                                {error}
-                            </div>
-                        )}
+          <h1
+            style={{
+              fontSize: "86px",
+              lineHeight: "0.95",
+              margin: "0 0 22px",
+              fontWeight: "900",
+              letterSpacing: "-3px",
+            }}
+          >
+            PipeGuard
+          </h1>
 
-                        <button
-                            type="submit"
-                            className="btn primary"
-                            style={{ width: "100%", padding: "14px", fontSize: "15px", marginTop: "10px", display: "flex", justifyContent: "center", alignItems: "center" }}
-                            disabled={loading}
-                        >
-                            {loading ? "Authenticating..." : "Secure Login"}
-                        </button>
-                    </form>
-
-                    <div style={{ textAlign: "center", marginTop: "24px", fontSize: "12px", color: "var(--muted)" }}>
-                        For emergency system access authorization,<br />please contact the IT department.
-                    </div>
-                </div>
-            </div>
-
-            <style>{`
-        .loginWrapper {
-          display: flex;
-          min-height: 100vh;
-          background: #f8fafc;
-        }
-        .loginLeft {
-          flex: 1;
-          background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-          padding: 60px;
-          display: flex;
-          flex-direction: column;
-          position: relative;
-          color: #fff;
-        }
-        .loginBrand {
-          display: flex;
-          align-items: center;
-        }
-        .loginShowcase {
-          margin-top: auto;
-          margin-bottom: auto;
-          animation: slideUp 0.6s ease-out;
-        }
-        .loginRight {
-          flex: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 40px;
-        }
-        .loginCard {
-          background: #fff;
-          width: 100%;
-          max-width: 440px;
-          padding: 48px;
-          border-radius: 24px;
-          box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.1);
-          animation: fadeIn 0.4s ease-out;
-        }
-        
-        @media (max-width: 900px) {
-          .loginLeft { display: none; }
-          .loginRight { padding: 20px; }
-          .loginCard { padding: 32px; border-radius: 16px; }
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; transform: scale(0.98); }
-          to { opacity: 1; transform: scale(1); }
-        }
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
+          <h2
+            style={{
+              fontSize: "42px",
+              lineHeight: "1.15",
+              margin: "0 0 22px",
+              fontWeight: "800",
+              maxWidth: "620px",
+            }}
+          >
+            Real-time pipeline inspection, risk alerts and maintenance control.
+          </h2>
         </div>
-    );
-}
+
+        <div
+          style={{
+            width: "100%",
+            background: "rgba(255,255,255,0.96)",
+            borderRadius: "28px",
+            padding: "36px",
+            boxShadow: "0 30px 80px rgba(0,0,0,0.38)",
+            boxSizing: "border-box",
+          }}
+        >
+          <div style={{ marginBottom: "26px" }}>
+            <p
+              style={{
+                margin: "0 0 8px",
+                color: "#0284c7",
+                fontSize: "13px",
+                fontWeight: "800",
+                letterSpacing: "1.5px",
+                textTransform: "uppercase",
+              }}
+            >
+              Secure Access
+            </p>
+
+            <h2
+              style={{
+                margin: 0,
+                color: "#0f172a",
+                fontSize: "30px",
+                fontWeight: "850",
+              }}
+            >
+              {role === "engineer" ? "Engineer Login" : "Admin Login"}
+            </h2>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              padding: "6px",
+              background: "#e2e8f0",
+              borderRadius: "16px",
+              marginBottom: "24px",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setRole("engineer");
+                setEmail("");
+                setPassword("");
+              }}
+              style={{
+                flex: 1,
+                padding: "13px",
+                border: "none",
+                borderRadius: "12px",
+                background: role === "engineer" ? "#0284c7" : "transparent",
+                color: role === "engineer" ? "white" : "#475569",
+                fontWeight: "800",
+                cursor: "pointer",
+              }}
+            >
+              Engineer
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setRole("admin");
+                setEmail("");
+                setPassword("");
+              }}
+              style={{
+                flex: 1,
+                padding: "13px",
+                border: "none",
+                borderRadius: "12px",
+                background: role === "admin" ? "#0284c7" : "transparent",
+                color: role === "admin" ? "white" : "#475569",
+                fontWeight: "800",
+                cursor: "pointer",
+              }}
+            >
+              Admin
+            </button>
+          </div>
+
+          <form onSubmit={handleLogin}>
+            <label style={{ fontSize: "13px", fontWeight: "800" }}>
+              Email Address
+            </label>
+
+            <input
+              type="email"
+              placeholder={
+                role === "engineer"
+                  ? "engineer@waterflow.com"
+                  : "admin@waterflow.com"
+              }
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              style={{
+                width: "100%",
+                padding: "15px",
+                marginTop: "8px",
+                marginBottom: "18px",
+                borderRadius: "14px",
+                border: "1px solid #cbd5e1",
+                background: "#f8fafc",
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+
+            <label style={{ fontSize: "13px", fontWeight: "800" }}>
+              Password
+            </label>
+
+            <input
+              type="password"
+              placeholder="Enter your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              style={{
+                width: "100%",
+                padding: "15px",
+                marginTop: "8px",
+                marginBottom: "12px",
+                borderRadius: "14px",
+                border: "1px solid #cbd5e1",
+                background: "#f8fafc",
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+
+            {role === "engineer" && (
+              <div style={{ textAlign: "right", marginBottom: "20px" }}>
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "#0284c7",
+                    fontWeight: "800",
+                    cursor: "pointer",
+                  }}
+                >
+                  Forgot password?
+                </button>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              style={{
+                width: "100%",
+                padding: "16px",
+                border: "none",
+                borderRadius: "15px",
+                background: "linear-gradient(135deg, #0284c7, #0f766e)",
+                color: "white",
+                fontSize: "15px",
+                fontWeight: "900",
+                cursor: "pointer",
+                boxShadow: "0 12px 24px rgba(2,132,199,0.28)",
+              }}
+            >
+              Login as {role === "engineer" ? "Engineer" : "Admin"}
+            </button>
+          </form>
+
+          <div
+            style={{
+              marginTop: "22px",
+              padding: "15px",
+              borderRadius: "16px",
+              background: "#f8fafc",
+              border: "1px dashed #cbd5e1",
+              color: "#475569",
+              fontSize: "13px",
+              lineHeight: "1.6",
+            }}
+          >
+            <b style={{ color: "#0f172a" }}>Demo Accounts</b>
+            <br />
+            Engineer: engineer@waterflow.com / engineer123
+            <br />
+            Admin: admin@waterflow.com / admin123
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Login;
