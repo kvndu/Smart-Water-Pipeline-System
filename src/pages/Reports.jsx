@@ -2,6 +2,33 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../utils/supabaseClient";
 
+const PAGE_SIZE = 1000;
+
+async function fetchAllPipelines() {
+  let allRows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await supabase
+      .from("pipelines")
+      .select("*")
+      .range(from, to);
+
+    if (error) throw error;
+
+    const rows = data || [];
+    allRows = [...allRows, ...rows];
+
+    if (rows.length < PAGE_SIZE) break;
+
+    from += PAGE_SIZE;
+  }
+
+  return allRows;
+}
+
 function toNumber(value, fallback = null) {
   if (value === null || value === undefined || value === "") return fallback;
   const n = Number(String(value).replace(/,/g, ""));
@@ -9,19 +36,19 @@ function toNumber(value, fallback = null) {
 }
 
 function getConditionScore(p) {
-  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE, null);
+  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE ?? p.condition_score, null);
 }
 
 function getCriticality(p) {
-  return toNumber(p.CRITICALITY, null);
+  return toNumber(p.CRITICALITY ?? p.criticality, null);
 }
 
 function getLength(p) {
-  return toNumber(p.Shape__Length, 0);
+  return toNumber(p.Shape__Length ?? p.shape__length, 0);
 }
 
 function getPipelineId(p) {
-  return p.WATMAINID || p.OBJECTID || "N/A";
+  return p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid || "N/A";
 }
 
 function getRiskLevel(p) {
@@ -97,6 +124,8 @@ function downloadCSV(filename, rows) {
   link.href = URL.createObjectURL(blob);
   link.download = filename;
   link.click();
+
+  URL.revokeObjectURL(link.href);
 }
 
 export default function Reports() {
@@ -107,23 +136,19 @@ export default function Reports() {
 
   useEffect(() => {
     async function loadReportsData() {
-      setLoading(true);
-      setErrorMsg("");
+      try {
+        setLoading(true);
+        setErrorMsg("");
 
-      const { data, error } = await supabase
-        .from("pipelines")
-        .select("*")
-        .limit(2000);
-
-      if (error) {
+        const rows = await fetchAllPipelines();
+        setPipelines(rows);
+      } catch (error) {
         console.error("Reports fetch error:", error);
         setPipelines([]);
         setErrorMsg("Failed to load reports data.");
-      } else {
-        setPipelines(data || []);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
 
     loadReportsData();
@@ -205,7 +230,7 @@ export default function Reports() {
     const zones = {};
 
     enriched.forEach((p) => {
-      const zone = p.PRESSURE_ZONE || "Unknown Zone";
+      const zone = p.PRESSURE_ZONE || p.pressure_zone || "Unknown Zone";
 
       if (!zones[zone]) {
         zones[zone] = {
@@ -226,7 +251,10 @@ export default function Reports() {
     });
 
     return Object.values(zones)
-      .sort((a, b) => b.critical + b.high + b.medium - (a.critical + a.high + a.medium))
+      .sort(
+        (a, b) =>
+          b.critical + b.high + b.medium - (a.critical + a.high + a.medium)
+      )
       .slice(0, 6);
   }, [enriched]);
 
@@ -234,7 +262,7 @@ export default function Reports() {
     const materials = {};
 
     enriched.forEach((p) => {
-      const material = p.MATERIAL || "Unknown";
+      const material = p.MATERIAL || p.material || "Unknown";
 
       if (!materials[material]) {
         materials[material] = {
@@ -257,15 +285,15 @@ export default function Reports() {
 
   const exportRows = useMemo(() => {
     return enriched.map((p) => ({
-      OBJECTID: p.OBJECTID,
-      WATMAINID: p.WATMAINID,
-      STATUS: p.STATUS,
-      PRESSURE_ZONE: p.PRESSURE_ZONE,
-      MAP_LABEL: p.MAP_LABEL,
-      CATEGORY: p.CATEGORY,
-      PIPE_SIZE: p.PIPE_SIZE,
-      MATERIAL: p.MATERIAL,
-      LINED: p.LINED,
+      OBJECTID: p.OBJECTID ?? p.objectid ?? "",
+      WATMAINID: p.WATMAINID ?? p.watmainid ?? "",
+      STATUS: p.STATUS ?? p.status ?? "",
+      PRESSURE_ZONE: p.PRESSURE_ZONE ?? p.pressure_zone ?? "",
+      MAP_LABEL: p.MAP_LABEL ?? p.map_label ?? "",
+      CATEGORY: p.CATEGORY ?? p.category ?? "",
+      PIPE_SIZE: p.PIPE_SIZE ?? p.pipe_size ?? "",
+      MATERIAL: p.MATERIAL ?? p.material ?? "",
+      LINED: p.LINED ?? p.lined ?? "",
       CONDITION_SCORE: p.conditionScore ?? "",
       CRITICALITY: p.criticality ?? "",
       Shape__Length: p.pipeLength ?? "",
@@ -333,10 +361,10 @@ export default function Reports() {
           </section>
 
           <section className="kpiGrid">
-            <Kpi title="Total Assets" value={stats.total} />
-            <Kpi title="High Risk" value={stats.high} tone="danger" />
-            <Kpi title="Medium Risk" value={stats.medium} tone="warn" />
-            <Kpi title="Critical Tasks" value={stats.critical} tone="danger" />
+            <Kpi title="Total Assets" value={stats.total.toLocaleString()} />
+            <Kpi title="High Risk" value={stats.high.toLocaleString()} tone="danger" />
+            <Kpi title="Medium Risk" value={stats.medium.toLocaleString()} tone="warn" />
+            <Kpi title="Critical Tasks" value={stats.critical.toLocaleString()} tone="danger" />
             <Kpi title="Avg. Condition" value={stats.avgCondition} tone="blue" />
             <Kpi title="System Health" value={`${stats.systemHealth}%`} tone="ok" />
           </section>
@@ -350,11 +378,11 @@ export default function Reports() {
             <div className="summaryGrid">
               <SummaryCard
                 title="Asset Risk Status"
-                text={`Out of ${stats.total} visible water main assets, ${stats.high} are classified as High risk, ${stats.medium} are Medium risk, and ${stats.low} are Low risk.`}
+                text={`Out of ${stats.total.toLocaleString()} visible water main assets, ${stats.high.toLocaleString()} are classified as High risk, ${stats.medium.toLocaleString()} are Medium risk, and ${stats.low.toLocaleString()} are Low risk.`}
               />
               <SummaryCard
                 title="Maintenance Priority"
-                text={`${stats.critical} assets require critical attention. ${stats.moderate} assets should be scheduled for preventive maintenance.`}
+                text={`${stats.critical.toLocaleString()} assets require critical attention. ${stats.moderate.toLocaleString()} assets should be scheduled for preventive maintenance.`}
               />
               <SummaryCard
                 title="Condition Insight"
@@ -362,7 +390,9 @@ export default function Reports() {
               />
               <SummaryCard
                 title="Network Coverage"
-                text={`The currently loaded records represent ${stats.totalLength.toFixed(1)} metres of visible Shape Length from the dataset.`}
+                text={`The currently loaded records represent ${stats.totalLength.toLocaleString(undefined, {
+                  maximumFractionDigits: 1,
+                })} metres of visible Shape Length from the dataset.`}
               />
             </div>
           </section>
@@ -378,19 +408,19 @@ export default function Reports() {
                 <ActionCard
                   tone="danger"
                   title="Immediate Inspection"
-                  value={stats.critical}
+                  value={stats.critical.toLocaleString()}
                   text="Send field team to inspect high-risk or high-criticality assets."
                 />
                 <ActionCard
                   tone="warn"
                   title="Preventive Maintenance"
-                  value={stats.moderate}
+                  value={stats.moderate.toLocaleString()}
                   text="Add medium-risk assets to upcoming maintenance schedule."
                 />
                 <ActionCard
                   tone="ok"
                   title="Routine Monitoring"
-                  value={stats.low}
+                  value={stats.low.toLocaleString()}
                   text="Low-risk assets can continue under normal monitoring."
                 />
               </div>
@@ -407,12 +437,12 @@ export default function Reports() {
                   <div key={zone.name} className="miniReportCard">
                     <div>
                       <h3>{zone.name}</h3>
-                      <p>{zone.total} assets</p>
+                      <p>{zone.total.toLocaleString()} assets</p>
                     </div>
                     <div className="miniStats">
-                      <span className="dangerText">{zone.high} High</span>
-                      <span className="warnText">{zone.medium} Medium</span>
-                      <span>{zone.critical} Critical</span>
+                      <span className="dangerText">{zone.high.toLocaleString()} High</span>
+                      <span className="warnText">{zone.medium.toLocaleString()} Medium</span>
+                      <span>{zone.critical.toLocaleString()} Critical</span>
                     </div>
                   </div>
                 ))}
@@ -430,9 +460,10 @@ export default function Reports() {
               {materialSummary.map((material) => (
                 <div key={material.name} className="materialCard">
                   <h3>{material.name}</h3>
-                  <strong>{material.total}</strong>
+                  <strong>{material.total.toLocaleString()}</strong>
                   <p>
-                    {material.high} high risk • {material.medium} medium risk
+                    {material.high.toLocaleString()} high risk •{" "}
+                    {material.medium.toLocaleString()} medium risk
                   </p>
                 </div>
               ))}
@@ -446,8 +477,8 @@ export default function Reports() {
             </div>
 
             <div className="priorityList">
-              {priorityAssets.map((p) => (
-                <div key={`${p.pipelineId}-${p.OBJECTID}`} className="priorityCard">
+              {priorityAssets.map((p, index) => (
+                <div key={`${p.pipelineId}-${p.OBJECTID || index}`} className="priorityCard">
                   <div>
                     <h3>
                       <Link to={`/pipelines/${p.pipelineId}`}>Pipeline #{p.pipelineId}</Link>
@@ -518,14 +549,6 @@ export default function Reports() {
           font-size: 30px;
         }
 
-        .reportHero p {
-          margin: 8px 0 0;
-          color: #5f7688;
-          max-width: 760px;
-          font-weight: 600;
-          line-height: 1.6;
-        }
-
         .reportActions {
           display: flex;
           gap: 10px;
@@ -548,6 +571,11 @@ export default function Reports() {
           background: #0b6fa4;
           color: white;
           border-color: #0b6fa4;
+        }
+
+        .reportActions button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
         }
 
         .panel,
@@ -811,6 +839,11 @@ export default function Reports() {
         .errorText {
           color: #dc2626;
           font-weight: 900;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(5px); }
+          to { opacity: 1; transform: translateY(0); }
         }
 
         @media print {

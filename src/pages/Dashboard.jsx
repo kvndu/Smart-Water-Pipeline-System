@@ -75,28 +75,40 @@ export default function Dashboard() {
     localStorage.removeItem("waterflow_auth");
     navigate("/login", { replace: true });
   }
+useEffect(() => {
+  async function loadAdminData() {
+    setLoading(true);
 
-  useEffect(() => {
-    async function fetchPipelines() {
-      setLoading(true);
+    let allData = [];
+    let from = 0;
+    const batchSize = 1000;
+    let keepFetching = true;
 
+    while (keepFetching) {
       const { data, error } = await supabase
         .from("pipelines")
         .select("*")
-        .limit(1000);
+        .range(from, from + batchSize - 1);
 
       if (error) {
-        console.error("Dashboard fetch error:", error);
-        setPipelines([]);
-      } else {
-        setPipelines(data || []);
+        console.error("Fetch error:", error);
+        break;
       }
 
-      setLoading(false);
+      if (data.length === 0) {
+        keepFetching = false;
+      } else {
+        allData = [...allData, ...data];
+        from += batchSize;
+      }
     }
 
-    fetchPipelines();
-  }, []);
+    setPipelines(allData);
+    setLoading(false);
+  }
+
+  loadAdminData();
+}, []);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);

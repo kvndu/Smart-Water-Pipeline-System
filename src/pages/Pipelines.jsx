@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-
+import { useNavigate } from "react-router-dom";
 import { fetchPipelines } from "../utils/pipelineService.js";
 
 function getRiskBadgeClass(level) {
@@ -56,7 +56,7 @@ function SegmentBar({ pipeline }) {
   );
 }
 
-function PipelineDetailsDrawer({ pipeline, onClose }) {
+function PipelineDetailsDrawer({ pipeline, onClose, onViewMap }) {
   if (!pipeline) return null;
 
   return (
@@ -74,6 +74,10 @@ function PipelineDetailsDrawer({ pipeline, onClose }) {
             ✕
           </button>
         </div>
+
+        <button className="drawer-map-btn" onClick={() => onViewMap(pipeline)}>
+          🗺️ View this pipeline on map
+        </button>
 
         <div className="details-grid">
           <div className="info-card">
@@ -207,6 +211,8 @@ function PipelineDetailsDrawer({ pipeline, onClose }) {
 }
 
 export default function Pipelines() {
+  const navigate = useNavigate();
+
   const [pipelines, setPipelines] = useState([]);
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState("All");
@@ -217,7 +223,7 @@ export default function Pipelines() {
   async function loadPipelines() {
     try {
       setLoading(true);
-      const data = await fetchPipelines(2000);
+      const data = await fetchPipelines();
       setPipelines(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to fetch pipelines:", error);
@@ -230,6 +236,17 @@ export default function Pipelines() {
   useEffect(() => {
     loadPipelines();
   }, []);
+
+  function goToMap(pipeline) {
+    const id = pipeline.pipeline_id;
+
+    if (!id) {
+      alert("This pipeline has no pipeline ID.");
+      return;
+    }
+
+    navigate(`/map-view?pipe=${encodeURIComponent(id)}`);
+  }
 
   const filteredPipelines = useMemo(() => {
     let list = [...pipelines];
@@ -373,7 +390,7 @@ export default function Pipelines() {
         table {
           width: 100%;
           border-collapse: collapse;
-          min-width: 1200px;
+          min-width: 1300px;
         }
 
         thead th {
@@ -459,19 +476,43 @@ export default function Pipelines() {
           color: #b42318;
         }
 
-        .view-btn {
+        .button-row {
+          display: flex;
+          gap: 8px;
+          flex-wrap: nowrap;
+        }
+
+        .view-btn,
+        .map-btn,
+        .drawer-map-btn {
           height: 40px;
           border: none;
           border-radius: 12px;
-          background: #2f67f6;
           color: white;
           padding: 0 16px;
           font-weight: 700;
           cursor: pointer;
+          white-space: nowrap;
         }
 
-        .view-btn:hover {
+        .view-btn {
+          background: #2f67f6;
+        }
+
+        .map-btn,
+        .drawer-map-btn {
+          background: #16a34a;
+        }
+
+        .view-btn:hover,
+        .map-btn:hover,
+        .drawer-map-btn:hover {
           opacity: 0.92;
+        }
+
+        .drawer-map-btn {
+          width: 100%;
+          margin-bottom: 18px;
         }
 
         .details-overlay {
@@ -784,12 +825,17 @@ export default function Pipelines() {
                       {formatNumber(pipeline.weakest_segment_end_m, 0)}m
                     </td>
                     <td>
-                      <button
-                        className="view-btn"
-                        onClick={() => setSelectedPipeline(pipeline)}
-                      >
-                        View
-                      </button>
+                      <div className="button-row">
+                        <button
+                          className="view-btn"
+                          onClick={() => setSelectedPipeline(pipeline)}
+                        >
+                          View
+                        </button>
+                        <button className="map-btn" onClick={() => goToMap(pipeline)}>
+                          Map
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -802,6 +848,7 @@ export default function Pipelines() {
       <PipelineDetailsDrawer
         pipeline={selectedPipeline}
         onClose={() => setSelectedPipeline(null)}
+        onViewMap={goToMap}
       />
     </div>
   );

@@ -2,17 +2,45 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../utils/supabaseClient";
 
+const PAGE_SIZE = 1000;
+
+async function fetchAllPipelines() {
+  let allRows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await supabase
+      .from("pipelines")
+      .select("*")
+      .range(from, to);
+
+    if (error) throw error;
+
+    const rows = data || [];
+    allRows = [...allRows, ...rows];
+
+    if (rows.length < PAGE_SIZE) break;
+
+    from += PAGE_SIZE;
+  }
+
+  return allRows;
+}
+
 function toNumber(value) {
-  const n = Number(value);
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(String(value).replace(/,/g, ""));
   return Number.isNaN(n) ? null : n;
 }
 
 function getConditionScore(p) {
-  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE);
+  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE ?? p.condition_score);
 }
 
 function getCriticality(p) {
-  return toNumber(p.CRITICALITY);
+  return toNumber(p.CRITICALITY ?? p.criticality);
 }
 
 function getRiskLevel(p) {
@@ -63,30 +91,29 @@ function getRiskColor(risk) {
 }
 
 function getPipelineId(p) {
-  return p.WATMAINID || p.OBJECTID || "N/A";
+  return p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid || "N/A";
 }
 
 export default function SystemHub() {
   const [pipelines, setPipelines] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
     async function loadPipelines() {
-      setLoading(true);
+      try {
+        setLoading(true);
+        setErrorMsg("");
 
-      const { data, error } = await supabase
-        .from("pipelines")
-        .select("*")
-        .limit(1000);
-
-      if (error) {
+        const rows = await fetchAllPipelines();
+        setPipelines(rows);
+      } catch (error) {
         console.error("System Hub fetch error:", error);
         setPipelines([]);
-      } else {
-        setPipelines(data || []);
+        setErrorMsg("Failed to load System Hub data from Supabase.");
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
 
     loadPipelines();
@@ -141,7 +168,7 @@ export default function SystemHub() {
     const zones = {};
 
     enriched.forEach((p) => {
-      const zone = p.PRESSURE_ZONE || "Unknown Zone";
+      const zone = p.PRESSURE_ZONE || p.pressure_zone || "Unknown Zone";
 
       if (!zones[zone]) {
         zones[zone] = {
@@ -161,7 +188,10 @@ export default function SystemHub() {
     });
 
     return Object.values(zones)
-      .sort((a, b) => b.immediate + b.high + b.medium - (a.immediate + a.high + a.medium))
+      .sort(
+        (a, b) =>
+          b.immediate + b.high + b.medium - (a.immediate + a.high + a.medium)
+      )
       .slice(0, 6);
   }, [enriched]);
 
@@ -174,21 +204,29 @@ export default function SystemHub() {
         </div>
 
         <div className="heroBadges">
-          <span>{loading ? "Loading..." : `${stats.total} assets loaded`}</span>
-          <span>{stats.immediate} immediate actions</span>
+          <span>
+            {loading ? "Loading..." : `${stats.total.toLocaleString()} assets loaded`}
+          </span>
+          <span>{stats.immediate.toLocaleString()} immediate actions</span>
           <span>{stats.systemHealth}% system health</span>
         </div>
       </div>
 
       {loading ? (
         <div className="panel">Loading System Hub data...</div>
+      ) : errorMsg ? (
+        <div className="panel errorBox">{errorMsg}</div>
       ) : (
         <>
           <div className="hubKpiGrid">
-            <Kpi title="Total Assets" value={stats.total} />
-            <Kpi title="High Risk" value={stats.high} tone="danger" />
-            <Kpi title="Medium Risk" value={stats.medium} tone="warn" />
-            <Kpi title="Immediate Queue" value={stats.immediate} tone="danger" />
+            <Kpi title="Total Assets" value={stats.total.toLocaleString()} />
+            <Kpi title="High Risk" value={stats.high.toLocaleString()} tone="danger" />
+            <Kpi title="Medium Risk" value={stats.medium.toLocaleString()} tone="warn" />
+            <Kpi
+              title="Immediate Queue"
+              value={stats.immediate.toLocaleString()}
+              tone="danger"
+            />
             <Kpi title="System Health" value={`${stats.systemHealth}%`} tone="blue" />
           </div>
 
@@ -236,19 +274,19 @@ export default function SystemHub() {
               <div className="decisionList">
                 <DecisionCard
                   title="Immediate Field Inspection"
-                  value={stats.immediate}
+                  value={stats.immediate.toLocaleString()}
                   text="High-risk or high-criticality assets should be inspected first."
                   tone="danger"
                 />
                 <DecisionCard
                   title="Preventive Maintenance"
-                  value={stats.medium}
+                  value={stats.medium.toLocaleString()}
                   text="Medium-risk assets should be planned for the next maintenance cycle."
                   tone="warn"
                 />
                 <DecisionCard
                   title="Routine Monitoring"
-                  value={stats.low}
+                  value={stats.low.toLocaleString()}
                   text="Low-risk assets can remain under normal monitoring."
                   tone="blue"
                 />
@@ -269,13 +307,13 @@ export default function SystemHub() {
                     <div key={zone.zone} className="zoneCard">
                       <div>
                         <h3>{zone.zone}</h3>
-                        <p>{zone.total} assets in this pressure zone</p>
+                        <p>{zone.total.toLocaleString()} assets in this pressure zone</p>
                       </div>
 
                       <div className="zoneStats">
-                        <span className="dangerText">{zone.high} High</span>
-                        <span className="warnText">{zone.medium} Medium</span>
-                        <span>{zone.immediate} Immediate</span>
+                        <span className="dangerText">{zone.high.toLocaleString()} High</span>
+                        <span className="warnText">{zone.medium.toLocaleString()} Medium</span>
+                        <span>{zone.immediate.toLocaleString()} Immediate</span>
                       </div>
                     </div>
                   ))
@@ -306,8 +344,8 @@ export default function SystemHub() {
                 </thead>
 
                 <tbody>
-                  {priorityQueue.map((p) => (
-                    <tr key={`${p.pipelineId}-${p.OBJECTID}`}>
+                  {priorityQueue.map((p, index) => (
+                    <tr key={`${p.pipelineId}-${p.OBJECTID || index}`}>
                       <td className="strong">{p.pipelineId}</td>
                       <td>{p.MATERIAL || "N/A"}</td>
                       <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
@@ -369,14 +407,6 @@ export default function SystemHub() {
           margin: 0;
           font-size: 30px;
           color: #123047;
-        }
-
-        .hubHero p {
-          margin: 8px 0 0;
-          color: #5f7688;
-          font-weight: 600;
-          line-height: 1.6;
-          max-width: 760px;
         }
 
         .heroBadges {
@@ -656,6 +686,16 @@ export default function SystemHub() {
           background: #f6fafc;
           color: #5f7688;
           font-weight: 800;
+        }
+
+        .errorBox {
+          color: #dc2626;
+          font-weight: 800;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(5px); }
+          to { opacity: 1; transform: translateY(0); }
         }
 
         @media (max-width: 1200px) {

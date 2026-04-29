@@ -14,6 +14,8 @@ import {
   Legend,
 } from "recharts";
 
+const PAGE_SIZE = 1000;
+
 const COLORS = {
   HIGH: "#ef4444",
   MEDIUM: "#f59e0b",
@@ -23,17 +25,43 @@ const COLORS = {
   PURPLE: "#8b5cf6",
 };
 
+async function fetchAllPipelines() {
+  let allRows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await supabase
+      .from("pipelines")
+      .select("*")
+      .range(from, to);
+
+    if (error) throw error;
+
+    const rows = data || [];
+    allRows = [...allRows, ...rows];
+
+    if (rows.length < PAGE_SIZE) break;
+
+    from += PAGE_SIZE;
+  }
+
+  return allRows;
+}
+
 function toNumber(value) {
-  const n = Number(value);
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(String(value).replace(/,/g, ""));
   return Number.isNaN(n) ? null : n;
 }
 
 function getConditionScore(p) {
-  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE);
+  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE ?? p.condition_score);
 }
 
 function getCriticality(p) {
-  return toNumber(p.CRITICALITY);
+  return toNumber(p.CRITICALITY ?? p.criticality);
 }
 
 function getRiskLevel(p) {
@@ -55,7 +83,7 @@ function getRiskLevel(p) {
 }
 
 function getInstallYear(p) {
-  const raw = p.INSTALLATION_DATE;
+  const raw = p.INSTALLATION_DATE ?? p.installation_date;
   if (!raw) return null;
 
   const match = String(raw).match(/\d{4}/);
@@ -81,23 +109,19 @@ export default function Analytics() {
 
   useEffect(() => {
     async function fetchAnalyticsData() {
-      setLoading(true);
-      setErrorMsg("");
+      try {
+        setLoading(true);
+        setErrorMsg("");
 
-      const { data, error } = await supabase
-        .from("pipelines")
-        .select("*")
-        .limit(1000);
-
-      if (error) {
+        const rows = await fetchAllPipelines();
+        setPipelines(rows);
+      } catch (error) {
         console.error("Analytics fetch error:", error);
         setPipelines([]);
         setErrorMsg("Failed to load analytics data from Supabase.");
-      } else {
-        setPipelines(data || []);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
 
     fetchAnalyticsData();
@@ -110,26 +134,15 @@ export default function Analytics() {
       condition: getConditionScore(p),
       criticality: getCriticality(p),
       installYear: getInstallYear(p),
-      length: toNumber(p.Shape__Length),
+      length: toNumber(p.Shape__Length ?? p.shape__length),
     }));
   }, [pipelines]);
 
   const stats = useMemo(() => {
-    const conditions = enriched
-      .map((p) => p.condition)
-      .filter((v) => v !== null);
-
-    const criticalities = enriched
-      .map((p) => p.criticality)
-      .filter((v) => v !== null);
-
-    const lengths = enriched
-      .map((p) => p.length)
-      .filter((v) => v !== null);
-
-    const years = enriched
-      .map((p) => p.installYear)
-      .filter((v) => v !== null);
+    const conditions = enriched.map((p) => p.condition).filter((v) => v !== null);
+    const criticalities = enriched.map((p) => p.criticality).filter((v) => v !== null);
+    const lengths = enriched.map((p) => p.length).filter((v) => v !== null);
+    const years = enriched.map((p) => p.installYear).filter((v) => v !== null);
 
     return {
       total: enriched.length,
@@ -145,9 +158,7 @@ export default function Analytics() {
           ? (criticalities.reduce((a, b) => a + b, 0) / criticalities.length).toFixed(2)
           : "N/A",
       totalLength:
-        lengths.length > 0
-          ? lengths.reduce((a, b) => a + b, 0).toFixed(2)
-          : "N/A",
+        lengths.length > 0 ? lengths.reduce((a, b) => a + b, 0).toFixed(2) : "N/A",
       oldestYear: years.length > 0 ? Math.min(...years) : "N/A",
     };
   }, [enriched]);
@@ -164,7 +175,7 @@ export default function Analytics() {
   const materialDistribution = useMemo(() => {
     const counts = {};
     enriched.forEach((p) => {
-      const material = p.MATERIAL || "Unknown";
+      const material = p.MATERIAL || p.material || "Unknown";
       counts[material] = (counts[material] || 0) + 1;
     });
 
@@ -177,7 +188,7 @@ export default function Analytics() {
   const pressureZoneDistribution = useMemo(() => {
     const counts = {};
     enriched.forEach((p) => {
-      const zone = p.PRESSURE_ZONE || "Unknown";
+      const zone = p.PRESSURE_ZONE || p.pressure_zone || "Unknown";
       counts[zone] = (counts[zone] || 0) + 1;
     });
 
@@ -185,16 +196,6 @@ export default function Analytics() {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [enriched]);
-
-  const categoryDistribution = useMemo(() => {
-    const counts = {};
-    enriched.forEach((p) => {
-      const category = p.CATEGORY || "Unknown";
-      counts[category] = (counts[category] || 0) + 1;
-    });
-
-    return Object.entries(counts).map(([name, value]) => ({ name, value }));
   }, [enriched]);
 
   const conditionGroups = useMemo(() => {
@@ -271,7 +272,7 @@ export default function Analytics() {
 
         <div className="heroBadges">
           <span>Real dataset</span>
-          <span>{stats.total} records loaded</span>
+          <span>{stats.total.toLocaleString()} records loaded</span>
           <span>Rule-based risk analysis</span>
         </div>
       </div>
@@ -283,16 +284,48 @@ export default function Analytics() {
       ) : (
         <>
           <div className="statGrid">
-            <StatCard label="Total Pipelines" value={stats.total} hint="Loaded from Supabase" />
-            <StatCard label="High Risk Assets" value={stats.high} hint="Condition ≤ 4 / high criticality" color="#ef4444" />
-            <StatCard label="Average Condition" value={stats.avgCondition} hint="Higher score means better condition" color="#2563eb" />
-            <StatCard label="Average Criticality" value={stats.avgCriticality} hint="Operational importance score" color="#f59e0b" />
-            <StatCard label="Total Length" value={`${stats.totalLength} m`} hint="Based on Shape__Length field" color="#16a34a" />
-            <StatCard label="Oldest Install Year" value={stats.oldestYear} hint="Extracted from installation date" color="#8b5cf6" />
+            <StatCard
+              label="Total Pipelines"
+              value={stats.total.toLocaleString()}
+              hint="Loaded from Supabase"
+            />
+            <StatCard
+              label="High Risk Assets"
+              value={stats.high.toLocaleString()}
+              hint="Condition ≤ 4 / high criticality"
+              color="#ef4444"
+            />
+            <StatCard
+              label="Average Condition"
+              value={stats.avgCondition}
+              hint="Higher score means better condition"
+              color="#2563eb"
+            />
+            <StatCard
+              label="Average Criticality"
+              value={stats.avgCriticality}
+              hint="Operational importance score"
+              color="#f59e0b"
+            />
+            <StatCard
+              label="Total Length"
+              value={`${Number(stats.totalLength).toLocaleString()} m`}
+              hint="Based on Shape__Length field"
+              color="#16a34a"
+            />
+            <StatCard
+              label="Oldest Install Year"
+              value={stats.oldestYear}
+              hint="Extracted from installation date"
+              color="#8b5cf6"
+            />
           </div>
 
           <div className="gridTwo">
-            <ChartPanel title="Risk Distribution" subtitle="Risk split calculated from condition score and criticality.">
+            <ChartPanel
+              title="Risk Distribution"
+              subtitle="Risk split calculated from condition score and criticality."
+            >
               <ResponsiveContainer width="100%" height={310}>
                 <PieChart>
                   <Pie
@@ -313,7 +346,10 @@ export default function Analytics() {
               </ResponsiveContainer>
             </ChartPanel>
 
-            <ChartPanel title="Material Distribution" subtitle="Most common materials in the water main asset inventory.">
+            <ChartPanel
+              title="Material Distribution"
+              subtitle="Most common materials in the water main asset inventory."
+            >
               <ResponsiveContainer width="100%" height={310}>
                 <BarChart data={materialDistribution}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -341,7 +377,10 @@ export default function Analytics() {
               </ResponsiveContainer>
             </ChartPanel>
 
-            <ChartPanel title="Condition Score Groups" subtitle="Poor, fair and good condition grouping.">
+            <ChartPanel
+              title="Condition Score Groups"
+              subtitle="Poor, fair and good condition grouping."
+            >
               <ResponsiveContainer width="100%" height={320}>
                 <BarChart data={conditionGroups}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -356,7 +395,10 @@ export default function Analytics() {
           </div>
 
           <div className="gridTwo">
-            <ChartPanel title="Installation Year Groups" subtitle="Pipeline age profile from installation dates.">
+            <ChartPanel
+              title="Installation Year Groups"
+              subtitle="Pipeline age profile from installation dates."
+            >
               <ResponsiveContainer width="100%" height={320}>
                 <BarChart data={installYearGroups}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -369,7 +411,10 @@ export default function Analytics() {
               </ResponsiveContainer>
             </ChartPanel>
 
-            <ChartPanel title="Top Critical Assets" subtitle="Highest criticality water mains in the dataset.">
+            <ChartPanel
+              title="Top Critical Assets"
+              subtitle="Highest criticality water mains in the dataset."
+            >
               <ResponsiveContainer width="100%" height={320}>
                 <BarChart data={criticalityTop}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -406,8 +451,8 @@ export default function Analytics() {
                   </tr>
                 </thead>
                 <tbody>
-                  {highRiskAssets.map((p) => (
-                    <tr key={p.OBJECTID}>
+                  {highRiskAssets.map((p, index) => (
+                    <tr key={p.OBJECTID || p.WATMAINID || index}>
                       <td className="strong">{p.WATMAINID || "N/A"}</td>
                       <td>{p.MATERIAL || "N/A"}</td>
                       <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
@@ -475,12 +520,6 @@ export default function Analytics() {
           margin: 0;
           font-size: 30px;
           color: #0f172a;
-        }
-
-        .hero p {
-          margin: 8px 0 0;
-          color: #64748b;
-          max-width: 780px;
         }
 
         .heroBadges {

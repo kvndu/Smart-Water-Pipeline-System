@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../utils/supabaseClient";
 
-const LS_KEY = "pipeguard_maintenance_logs";
+const LS_LOGS_KEY = "pipeguard_maintenance_logs";
+const LS_STATUS_KEY = "pipeguard_maintenance_statuses";
+const PAGE_SIZE = 1000;
 
 function num(v) {
   const n = Number(v);
   return Number.isNaN(n) ? null : n;
 }
 
+function getId(p) {
+  return p.WATMAINID ?? p.watmainid ?? p.id ?? p.OBJECTID;
+}
+
 function getCondition(p) {
-  return num(p["Condition Score"] ?? p.CONDITION_SCORE);
+  return num(p["Condition Score"] ?? p.CONDITION_SCORE ?? p.condition_score);
 }
 
 function getCriticality(p) {
-  return num(p.CRITICALITY);
+  return num(p.CRITICALITY ?? p.criticality);
 }
 
 function getRisk(p) {
@@ -52,26 +58,58 @@ function getAction(p) {
 }
 
 function badgeColor(value) {
-  if (value === "HIGH" || value === "CRITICAL" || value === "IN_PROGRESS")
+  if (value === "HIGH" || value === "CRITICAL" || value === "IN_PROGRESS") {
     return "#ef4444";
-  if (value === "MEDIUM" || value === "MODERATE" || value === "SCHEDULED")
+  }
+
+  if (value === "MEDIUM" || value === "MODERATE" || value === "SCHEDULED") {
     return "#f59e0b";
+  }
+
   if (value === "COMPLETED") return "#22c55e";
+
   return "#0284c7";
 }
 
-function loadLogs() {
+function loadJson(key, fallback) {
   try {
-    return JSON.parse(localStorage.getItem(LS_KEY)) || [];
+    return JSON.parse(localStorage.getItem(key)) || fallback;
   } catch {
-    return [];
+    return fallback;
   }
+}
+
+async function fetchAllPipelines() {
+  let allRows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await supabase
+      .from("pipelines")
+      .select("*")
+      .range(from, to);
+
+    if (error) throw error;
+
+    const rows = data || [];
+    allRows = [...allRows, ...rows];
+
+    if (rows.length < PAGE_SIZE) break;
+
+    from += PAGE_SIZE;
+  }
+
+  return allRows;
 }
 
 export default function Maintenance() {
   const [pipelines, setPipelines] = useState([]);
-  const [logs, setLogs] = useState(() => loadLogs());
+  const [logs, setLogs] = useState(() => loadJson(LS_LOGS_KEY, []));
+  const [statusMap, setStatusMap] = useState(() => loadJson(LS_STATUS_KEY, {}));
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
 
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState("ALL");
@@ -85,37 +123,36 @@ export default function Maintenance() {
 
   useEffect(() => {
     async function loadData() {
-      const { data, error } = await supabase
-        .from("pipelines")
-        .select("*")
-        .limit(1000);
+      try {
+        setLoading(true);
+        setLoadError("");
 
-      if (error) {
+        const rows = await fetchAllPipelines();
+        setPipelines(rows);
+      } catch (error) {
         console.error("Maintenance fetch error:", error);
+        setLoadError(error.message || "Failed to load maintenance data.");
         setPipelines([]);
-      } else {
-        const enriched = (data || []).map((p) => ({
-          ...p,
-          maintenance_status: "PENDING",
-        }));
-        setPipelines(enriched);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
 
     loadData();
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(LS_KEY, JSON.stringify(logs));
+    localStorage.setItem(LS_LOGS_KEY, JSON.stringify(logs));
   }, [logs]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_STATUS_KEY, JSON.stringify(statusMap));
+  }, [statusMap]);
 
   const enrichedPipelines = useMemo(() => {
     return pipelines.map((p) => {
-      const completed = logs.find(
-        (log) => String(log.watmainid) === String(p.WATMAINID)
-      );
+      const id = String(getId(p));
+      const completed = logs.find((log) => String(log.watmainid) === id);
 
       return {
         ...p,
@@ -124,27 +161,29 @@ export default function Maintenance() {
         action: getAction(p),
         maintenance_status: completed
           ? "COMPLETED"
-          : p.maintenance_status || "PENDING",
+          : statusMap[id] || p.maintenance_status || "PENDING",
       };
     });
-  }, [pipelines, logs]);
+  }, [pipelines, logs, statusMap]);
 
   const filtered = useMemo(() => {
     return enrichedPipelines.filter((p) => {
       const q = search.toLowerCase();
+      const watmainid = String(p.WATMAINID ?? "").toLowerCase();
+      const material = String(p.MATERIAL ?? "").toLowerCase();
+      const pipeSize = String(p.PIPE_SIZE ?? p.MAP_LABEL ?? "").toLowerCase();
+      const zone = String(p.PRESSURE_ZONE ?? "").toLowerCase();
 
       const matchSearch =
         !q ||
-        String(p.WATMAINID).toLowerCase().includes(q) ||
-        String(p.MATERIAL).toLowerCase().includes(q) ||
-        String(p.PIPE_SIZE).toLowerCase().includes(q) ||
-        String(p.PRESSURE_ZONE).toLowerCase().includes(q);
+        watmainid.includes(q) ||
+        material.includes(q) ||
+        pipeSize.includes(q) ||
+        zone.includes(q);
 
       const matchRisk = riskFilter === "ALL" || p.risk === riskFilter;
-      const matchPriority =
-        priorityFilter === "ALL" || p.priority === priorityFilter;
-      const matchStatus =
-        statusFilter === "ALL" || p.maintenance_status === statusFilter;
+      const matchPriority = priorityFilter === "ALL" || p.priority === priorityFilter;
+      const matchStatus = statusFilter === "ALL" || p.maintenance_status === statusFilter;
 
       return matchSearch && matchRisk && matchPriority && matchStatus;
     });
@@ -158,19 +197,18 @@ export default function Maintenance() {
       pending: enrichedPipelines.filter((p) => p.maintenance_status === "PENDING").length,
       scheduled: enrichedPipelines.filter((p) => p.maintenance_status === "SCHEDULED").length,
       inProgress: enrichedPipelines.filter((p) => p.maintenance_status === "IN_PROGRESS").length,
-      completed: logs.length,
+      completed: enrichedPipelines.filter((p) => p.maintenance_status === "COMPLETED").length,
       cost: logs.reduce((sum, l) => sum + Number(l.cost || 0), 0),
     };
   }, [enrichedPipelines, logs]);
 
   function updateStatus(watmainid, status) {
-    setPipelines((prev) =>
-      prev.map((p) =>
-        String(p.WATMAINID) === String(watmainid)
-          ? { ...p, maintenance_status: status }
-          : p
-      )
-    );
+    const id = String(watmainid);
+
+    setStatusMap((prev) => ({
+      ...prev,
+      [id]: status,
+    }));
   }
 
   function completeRepair(p) {
@@ -179,16 +217,17 @@ export default function Maintenance() {
       return;
     }
 
+    const id = getId(p);
     const condition = getCondition(p);
     const newCondition =
       condition !== null ? Math.min(10, condition + 2).toFixed(2) : "Improved";
 
     const log = {
       id: `LOG-${Date.now()}`,
-      watmainid: p.WATMAINID,
+      watmainid: id,
       objectId: p.OBJECTID,
       material: p.MATERIAL,
-      pipeSize: p.PIPE_SIZE,
+      pipeSize: p.PIPE_SIZE || p.MAP_LABEL,
       zone: p.PRESSURE_ZONE,
       oldRisk: p.risk,
       newRisk: condition !== null && condition + 2 > 7 ? "LOW" : p.risk,
@@ -201,14 +240,25 @@ export default function Maintenance() {
     };
 
     setLogs((prev) => [log, ...prev]);
-    updateStatus(p.WATMAINID, "COMPLETED");
+    updateStatus(id, "COMPLETED");
     setActiveTask(null);
     setRepairCost("");
     setNote("");
   }
 
   if (loading) {
-    return <div className="maintenancePage">Loading maintenance data...</div>;
+    return <div className="maintenancePage">Loading all maintenance data...</div>;
+  }
+
+  if (loadError) {
+    return (
+      <div className="maintenancePage">
+        <div className="panel">
+          <h2>Could not load maintenance data</h2>
+          <p>{loadError}</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -220,23 +270,19 @@ export default function Maintenance() {
         </div>
 
         <div className="heroBadges">
-          <span>{stats.total} assets</span>
-          <span>{stats.critical} critical</span>
-          <span>{stats.completed} completed</span>
+          <span>{stats.total.toLocaleString()} assets</span>
+          <span>{stats.critical.toLocaleString()} critical</span>
+          <span>{stats.completed.toLocaleString()} completed</span>
         </div>
       </div>
 
       <div className="kpiGrid">
-        <Kpi title="Total Assets" value={stats.total} />
-        <Kpi title="Critical Tasks" value={stats.critical} color="#ef4444" />
-        <Kpi title="Moderate Tasks" value={stats.moderate} color="#f59e0b" />
-        <Kpi title="Scheduled" value={stats.scheduled} color="#2563eb" />
-        <Kpi title="In Progress" value={stats.inProgress} color="#dc2626" />
-        <Kpi
-          title="Total Cost"
-          value={`Rs. ${stats.cost.toLocaleString()}`}
-          color="#16a34a"
-        />
+        <Kpi title="Total Assets" value={stats.total.toLocaleString()} />
+        <Kpi title="Critical Tasks" value={stats.critical.toLocaleString()} color="#ef4444" />
+        <Kpi title="Moderate Tasks" value={stats.moderate.toLocaleString()} color="#f59e0b" />
+        <Kpi title="Scheduled" value={stats.scheduled.toLocaleString()} color="#2563eb" />
+        <Kpi title="In Progress" value={stats.inProgress.toLocaleString()} color="#dc2626" />
+        <Kpi title="Total Cost" value={`Rs. ${stats.cost.toLocaleString()}`} color="#16a34a" />
       </div>
 
       <div className="panel">
@@ -261,20 +307,14 @@ export default function Maintenance() {
             <option value="LOW">Low</option>
           </select>
 
-          <select
-            value={priorityFilter}
-            onChange={(e) => setPriorityFilter(e.target.value)}
-          >
+          <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
             <option value="ALL">All Priority</option>
             <option value="CRITICAL">Critical</option>
             <option value="MODERATE">Moderate</option>
             <option value="LOW">Low</option>
           </select>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="ALL">All Status</option>
             <option value="PENDING">Pending</option>
             <option value="SCHEDULED">Scheduled</option>
@@ -284,7 +324,8 @@ export default function Maintenance() {
         </div>
 
         <div className="smallText">
-          Showing {filtered.length} of {enrichedPipelines.length} pipelines.
+          Showing {filtered.length.toLocaleString()} of{" "}
+          {enrichedPipelines.length.toLocaleString()} pipelines.
         </div>
 
         <div className="tableWrap">
@@ -306,87 +347,89 @@ export default function Maintenance() {
             </thead>
 
             <tbody>
-              {filtered.map((p) => (
-                <tr key={p.OBJECTID}>
-                  <td className="strong">{p.WATMAINID}</td>
-                  <td>{p.MATERIAL || "N/A"}</td>
-                  <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
-                  <td>{p.PRESSURE_ZONE || "N/A"}</td>
-                  <td>{getCondition(p) ?? "N/A"}</td>
-                  <td>{getCriticality(p) ?? "N/A"}</td>
-                  <td>
-                    <Badge value={p.risk} />
-                  </td>
-                  <td>
-                    <Badge value={p.priority} />
-                  </td>
-                  <td>
-                    <Badge value={p.maintenance_status} />
-                  </td>
-                  <td>{p.action}</td>
-                  <td>
-                    {activeTask === p.WATMAINID ? (
-                      <div className="repairBox">
-                        <select
-                          value={repairType}
-                          onChange={(e) => setRepairType(e.target.value)}
-                        >
-                          <option>Leak repaired and section reinforced</option>
-                          <option>Pipe joint repaired</option>
-                          <option>Valve section restored</option>
-                          <option>Pipe section replaced</option>
-                          <option>Crack sealed and reinforced</option>
-                        </select>
+              {filtered.map((p, index) => {
+                const id = getId(p);
 
-                        <input
-                          type="number"
-                          value={repairCost}
-                          onChange={(e) => setRepairCost(e.target.value)}
-                          placeholder="Repair cost"
-                        />
+                return (
+                  <tr key={`${p.OBJECTID || id}-${index}`}>
+                    <td className="strong">{p.WATMAINID || "N/A"}</td>
+                    <td>{p.MATERIAL || "N/A"}</td>
+                    <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
+                    <td>{p.PRESSURE_ZONE || "N/A"}</td>
+                    <td>{getCondition(p) ?? "N/A"}</td>
+                    <td>{getCriticality(p) ?? "N/A"}</td>
+                    <td>
+                      <Badge value={p.risk} />
+                    </td>
+                    <td>
+                      <Badge value={p.priority} />
+                    </td>
+                    <td>
+                      <Badge value={p.maintenance_status} />
+                    </td>
+                    <td>{p.action}</td>
+                    <td>
+                      {String(activeTask) === String(id) ? (
+                        <div className="repairBox">
+                          <select
+                            value={repairType}
+                            onChange={(e) => setRepairType(e.target.value)}
+                          >
+                            <option>Leak repaired and section reinforced</option>
+                            <option>Pipe joint repaired</option>
+                            <option>Valve section restored</option>
+                            <option>Pipe section replaced</option>
+                            <option>Crack sealed and reinforced</option>
+                          </select>
 
-                        <input
-                          value={note}
-                          onChange={(e) => setNote(e.target.value)}
-                          placeholder="Maintenance note"
-                        />
+                          <input
+                            type="number"
+                            value={repairCost}
+                            onChange={(e) => setRepairCost(e.target.value)}
+                            placeholder="Repair cost"
+                          />
 
+                          <input
+                            value={note}
+                            onChange={(e) => setNote(e.target.value)}
+                            placeholder="Maintenance note"
+                          />
+
+                          <div className="btnRow">
+                            <button onClick={() => completeRepair(p)}>Save Repair</button>
+                            <button className="ghost" onClick={() => setActiveTask(null)}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
                         <div className="btnRow">
-                          <button onClick={() => completeRepair(p)}>
-                            Save Repair
+                          <button
+                            onClick={() => updateStatus(id, "SCHEDULED")}
+                            disabled={p.maintenance_status !== "PENDING"}
+                          >
+                            Schedule
                           </button>
-                          <button className="ghost" onClick={() => setActiveTask(null)}>
-                            Cancel
+                          <button
+                            className="ghost"
+                            onClick={() => updateStatus(id, "IN_PROGRESS")}
+                            disabled={p.maintenance_status !== "SCHEDULED"}
+                          >
+                            Start
+                          </button>
+                          <button
+                            className="ghost"
+                            onClick={() => setActiveTask(id)}
+                            disabled={p.maintenance_status !== "IN_PROGRESS"}
+                          >
+                            Complete
                           </button>
                         </div>
-                      </div>
-                    ) : (
-                      <div className="btnRow">
-                        <button
-                          onClick={() => updateStatus(p.WATMAINID, "SCHEDULED")}
-                          disabled={p.maintenance_status !== "PENDING"}
-                        >
-                          Schedule
-                        </button>
-                        <button
-                          className="ghost"
-                          onClick={() => updateStatus(p.WATMAINID, "IN_PROGRESS")}
-                          disabled={p.maintenance_status !== "SCHEDULED"}
-                        >
-                          Start
-                        </button>
-                        <button
-                          className="ghost"
-                          onClick={() => setActiveTask(p.WATMAINID)}
-                          disabled={p.maintenance_status !== "IN_PROGRESS"}
-                        >
-                          Complete
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -422,7 +465,7 @@ export default function Maintenance() {
                   <div>
                     Condition: {log.oldCondition} → {log.newCondition}
                   </div>
-                  <div>Cost: Rs. {log.cost.toLocaleString()}</div>
+                  <div>Cost: Rs. {Number(log.cost || 0).toLocaleString()}</div>
                   {log.note && <div>Note: {log.note}</div>}
                 </div>
               </div>
@@ -467,12 +510,6 @@ export default function Maintenance() {
           margin: 0;
           font-size: 30px;
           color: #0f172a;
-        }
-
-        .hero p {
-          margin: 8px 0 0;
-          color: #64748b;
-          max-width: 760px;
         }
 
         .heroBadges {

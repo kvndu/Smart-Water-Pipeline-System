@@ -1,6 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../utils/supabaseClient";
 
+const PAGE_SIZE = 1000;
+
+async function fetchAllPipelines() {
+  let allRows = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await supabase
+      .from("pipelines")
+      .select("*")
+      .range(from, to);
+
+    if (error) throw error;
+
+    allRows = [...allRows, ...(data || [])];
+
+    if (!data || data.length < PAGE_SIZE) break;
+
+    from += PAGE_SIZE;
+  }
+
+  return allRows;
+}
+
 function toNumber(value, fallback = null) {
   if (value === null || value === undefined || value === "") return fallback;
   const n = Number(String(value).replace(/,/g, ""));
@@ -8,68 +34,32 @@ function toNumber(value, fallback = null) {
 }
 
 function getConditionScore(row) {
-  return toNumber(row["Condition Score"] ?? row.CONDITION_SCORE, null);
+  return toNumber(row["Condition Score"] ?? row.CONDITION_SCORE ?? row.condition_score, null);
 }
 
 function getCriticality(row) {
-  return toNumber(row.CRITICALITY, null);
+  return toNumber(row.CRITICALITY ?? row.criticality, null);
 }
 
 function getPipeLength(row) {
-  return toNumber(row.Shape__Length, 0);
+  return toNumber(row.Shape__Length ?? row.shape__length, 0);
 }
 
 function getPipeSize(row) {
-  return toNumber(row.PIPE_SIZE, 0);
+  return toNumber(row.PIPE_SIZE ?? row.pipe_size, 0);
 }
 
 function calculateDatasetRisk({ conditionScore, criticality }) {
   if (conditionScore !== null) {
-    if (conditionScore <= 4) {
-      return {
-        level: "High",
-        score: 0.85,
-        reason: "Condition score is poor and requires immediate attention.",
-      };
-    }
-
-    if (conditionScore <= 7) {
-      return {
-        level: "Medium",
-        score: 0.55,
-        reason: "Condition score shows moderate deterioration.",
-      };
-    }
-
-    return {
-      level: "Low",
-      score: 0.2,
-      reason: "Condition score is healthy.",
-    };
+    if (conditionScore <= 4) return { level: "High", score: 0.85, reason: "Condition score is poor and requires immediate attention." };
+    if (conditionScore <= 7) return { level: "Medium", score: 0.55, reason: "Condition score shows moderate deterioration." };
+    return { level: "Low", score: 0.2, reason: "Condition score is healthy." };
   }
 
   if (criticality !== null) {
-    if (criticality >= 8) {
-      return {
-        level: "High",
-        score: 0.85,
-        reason: "Criticality is high and asset impact is significant.",
-      };
-    }
-
-    if (criticality >= 5) {
-      return {
-        level: "Medium",
-        score: 0.55,
-        reason: "Criticality indicates moderate operational importance.",
-      };
-    }
-
-    return {
-      level: "Low",
-      score: 0.2,
-      reason: "Criticality is low.",
-    };
+    if (criticality >= 8) return { level: "High", score: 0.85, reason: "Criticality is high and asset impact is significant." };
+    if (criticality >= 5) return { level: "Medium", score: 0.55, reason: "Criticality indicates moderate operational importance." };
+    return { level: "Low", score: 0.2, reason: "Criticality is low." };
   }
 
   return {
@@ -110,21 +100,16 @@ export default function RiskCalculator() {
 
   useEffect(() => {
     async function loadPipelines() {
-      setLoading(true);
-
-      const { data, error } = await supabase
-        .from("pipelines")
-        .select("*")
-        .limit(1000);
-
-      if (error) {
+      try {
+        setLoading(true);
+        const rows = await fetchAllPipelines();
+        setPipelines(rows);
+      } catch (error) {
         console.error("Risk calculator fetch error:", error);
         setPipelines([]);
-      } else {
-        setPipelines(data || []);
+      } finally {
+        setLoading(false);
       }
-
-      setLoading(false);
     }
 
     loadPipelines();
@@ -132,7 +117,6 @@ export default function RiskCalculator() {
 
   useEffect(() => {
     if (!pipelines.length || selectedId) return;
-
     const first = pipelines[0];
     setSelectedId(String(first.WATMAINID || first.OBJECTID || ""));
   }, [pipelines, selectedId]);
@@ -242,15 +226,15 @@ export default function RiskCalculator() {
           <div className="heroEyebrow">Dataset Risk Engine</div>
           <h1>Water Main Risk Calculator</h1>
           <p>
-            Calculate risk using real Waterloo/Kitchener dataset fields: Condition Score first,
-            then Criticality as fallback.
+            Calculate risk using real Waterloo/Kitchener dataset fields:
+            Condition Score first, then Criticality as fallback.
           </p>
         </div>
 
         <div className="calcHeroStats">
-          <MiniStat label="Assets" value={loading ? "..." : datasetStats.total} />
-          <MiniStat label="High Risk" value={datasetStats.high} tone="danger" />
-          <MiniStat label="Medium Risk" value={datasetStats.medium} tone="warn" />
+          <MiniStat label="Assets" value={loading ? "..." : datasetStats.total.toLocaleString()} />
+          <MiniStat label="High Risk" value={datasetStats.high.toLocaleString()} tone="danger" />
+          <MiniStat label="Medium Risk" value={datasetStats.medium.toLocaleString()} tone="warn" />
         </div>
       </div>
 
@@ -289,16 +273,20 @@ export default function RiskCalculator() {
                   }}
                 >
                   {pipelines.map((p) => (
-                    <option key={p.OBJECTID || p.WATMAINID} value={p.WATMAINID || p.OBJECTID}>
+                    <option
+                      key={p.OBJECTID || p.WATMAINID}
+                      value={p.WATMAINID || p.OBJECTID}
+                    >
                       {p.WATMAINID || p.OBJECTID} • {p.MATERIAL || "Unknown"} •{" "}
-                      {p.PIPE_SIZE || p.MAP_LABEL || "N/A"} • {p.PRESSURE_ZONE || "Zone N/A"}
+                      {p.PIPE_SIZE || p.MAP_LABEL || "N/A"} •{" "}
+                      {p.PRESSURE_ZONE || "Zone N/A"}
                     </option>
                   ))}
                 </select>
               </label>
 
               {loading ? (
-                <div className="calcInfoBox">Loading pipeline records...</div>
+                <div className="calcInfoBox">Loading all pipeline records...</div>
               ) : (
                 <PipelinePreview values={selectedValues} />
               )}
@@ -430,7 +418,10 @@ export default function RiskCalculator() {
                 </span>
               </div>
 
-              <div className="scoreCircle">
+              <div
+                className="scoreCircle"
+                style={{ "--score": Math.round(result.riskScore * 100) }}
+              >
                 <div>
                   <strong>{Math.round(result.riskScore * 100)}%</strong>
                   <span>Risk Score</span>
@@ -441,7 +432,10 @@ export default function RiskCalculator() {
                 <ResultRow label="Pipeline ID" value={result.id} />
                 <ResultRow label="Material" value={result.material} />
                 <ResultRow label="Pipe Size" value={result.pipeSize || "N/A"} />
-                <ResultRow label="Length" value={result.length ? `${result.length.toFixed(1)} m` : "N/A"} />
+                <ResultRow
+                  label="Length"
+                  value={result.length ? `${result.length.toFixed(1)} m` : "N/A"}
+                />
                 <ResultRow label="Condition Score" value={result.conditionScore ?? "N/A"} />
                 <ResultRow label="Criticality" value={result.criticality ?? "N/A"} />
                 <ResultRow label="Failure Probability" value={`${result.failureProbability}%`} />
@@ -675,17 +669,9 @@ export default function RiskCalculator() {
           font-weight: 800;
         }
 
-        .dangerText {
-          color: #dc2626;
-        }
-
-        .warnText {
-          color: #d97706;
-        }
-
-        .okText {
-          color: #16875d;
-        }
+        .dangerText { color: #dc2626; }
+        .warnText { color: #d97706; }
+        .okText { color: #16875d; }
 
         .calculateBtn {
           margin-top: 18px;
@@ -763,17 +749,9 @@ export default function RiskCalculator() {
           font-weight: 950;
         }
 
-        .calcBadgeHigh {
-          background: #dc2626;
-        }
-
-        .calcBadgeMedium {
-          background: #d97706;
-        }
-
-        .calcBadgeLow {
-          background: #16875d;
-        }
+        .calcBadgeHigh { background: #dc2626; }
+        .calcBadgeMedium { background: #d97706; }
+        .calcBadgeLow { background: #16875d; }
 
         .scoreCircle {
           width: 170px;
@@ -849,6 +827,11 @@ export default function RiskCalculator() {
 
         .recommendBox b {
           color: #0b6fa4;
+        }
+
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(5px); }
+          to { opacity: 1; transform: translateY(0); }
         }
 
         @media (max-width: 1150px) {
