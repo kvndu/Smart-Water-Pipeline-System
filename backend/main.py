@@ -514,8 +514,235 @@ def predict_pipeline(pipeline_id: str, persist: bool = False):
     if persist:
         save_derived_fields(enriched["pipeline_id"], enriched)
 
+    recommendation = enriched.get("recommendation", {}) or {}
+
+    risk_score = safe_float(enriched.get("risk_score"), 0.0)
+    risk_30_day = safe_float(enriched.get("risk_30_day"), risk_score)
+    risk_90_day = safe_float(enriched.get("risk_90_day"), risk_score)
+    estimated_life_months = safe_float(enriched.get("estimated_life_months"), 0.0)
+
+    condition_score = safe_float(enriched.get("condition_score"), 0.0)
+    criticality_value = safe_float(enriched.get("criticality"), 0.0)
+    pipe_size = safe_float(enriched.get("diameter_mm") or enriched.get("PIPE_SIZE"), 0.0)
+    pipe_length = safe_float(enriched.get("pipe_length_m") or enriched.get("Shape__Length"), 0.0)
+    material = enriched.get("material_type") or enriched.get("MATERIAL") or "Unknown"
+    status = enriched.get("status") or enriched.get("STATUS") or "Unknown"
+    pressure_zone = enriched.get("PRESSURE_ZONE") or enriched.get("ds_division") or "Unknown"
+    category = enriched.get("CATEGORY") or "Unknown"
+
+    health_score = max(0, min(100, round((1 - risk_score) * 100)))
+    estimated_remaining_life_years = round(estimated_life_months / 12, 1)
+
+    if condition_score >= 8:
+        condition_category = "Good"
+    elif condition_score >= 5:
+        condition_category = "Fair"
+    elif condition_score > 0:
+        condition_category = "Poor"
+    else:
+        condition_category = "Unknown"
+
+    if risk_score >= 0.7:
+        likelihood_of_failure = "High"
+    elif risk_score >= 0.4:
+        likelihood_of_failure = "Medium"
+    else:
+        likelihood_of_failure = "Low"
+
+    if criticality_value >= 8:
+        consequence_of_failure = "High"
+    elif criticality_value >= 5:
+        consequence_of_failure = "Medium"
+    else:
+        consequence_of_failure = "Low"
+
+    failure_warning_30_day = "High" if risk_30_day >= 0.7 else "Medium" if risk_30_day >= 0.4 else "Low"
+    failure_warning_90_day = "High" if risk_90_day >= 0.7 else "Medium" if risk_90_day >= 0.4 else "Low"
+
+    if failure_warning_30_day == "High" or enriched["risk_level"] == "High":
+        maintenance_priority = "Urgent Inspection"
+    elif failure_warning_90_day in ["High", "Medium"] or enriched["risk_level"] == "Medium":
+        maintenance_priority = "Planned Inspection"
+    else:
+        maintenance_priority = recommendation.get("priority", "Routine Monitoring")
+
+    # -------------------------
+    # Engineering sub-scores
+    # -------------------------
+    condition_risk_score = max(0, min(1, (10 - condition_score) / 10)) if condition_score else 0.5
+    criticality_risk_score = max(0, min(1, criticality_value / 10)) if criticality_value else 0.3
+
+    material_upper = str(material).upper()
+    if any(x in material_upper for x in ["CI", "CAST", "IRON"]):
+        material_risk_score = 0.70
+        material_risk_level = "High"
+        material_note = "Material type may have higher deterioration sensitivity."
+    elif any(x in material_upper for x in ["DI", "DUCTILE"]):
+        material_risk_score = 0.45
+        material_risk_level = "Medium"
+        material_note = "Ductile iron material indicates moderate material risk."
+    elif any(x in material_upper for x in ["PVC", "HDPE", "PLASTIC"]):
+        material_risk_score = 0.25
+        material_risk_level = "Low"
+        material_note = "Material type indicates lower material-related risk."
+    else:
+        material_risk_score = 0.40
+        material_risk_level = "Medium"
+        material_note = "Material risk is estimated because material information is limited."
+
+    status_upper = str(status).upper()
+    if status_upper in ["ABANDONED", "RETIRED", "INACTIVE"]:
+        status_risk_score = 0.80
+        status_risk_level = "High"
+        status_note = "Asset status indicates a non-active or degraded operational state."
+    elif status_upper == "ACTIVE":
+        status_risk_score = 0.20
+        status_risk_level = "Low"
+        status_note = "Asset is currently active."
+    else:
+        status_risk_score = 0.40
+        status_risk_level = "Medium"
+        status_note = "Status information is uncertain."
+
+    length_impact_score = min(1, pipe_length / 1000) if pipe_length else 0.2
+    diameter_impact_score = min(1, pipe_size / 600) if pipe_size else 0.2
+    pressure_zone_impact_score = 0.55 if pressure_zone not in ["Unknown", "-", ""] else 0.35
+
+    current_condition = {
+        "condition_score": condition_score,
+        "health_score": health_score,
+        "condition_category": condition_category,
+        "explanation": (
+            f"Condition score {condition_score} is classified as {condition_category}. "
+            f"The derived health score is {health_score}%."
+        ),
+    }
+
+    failure_likelihood = {
+        "overall": likelihood_of_failure,
+        "age_risk": "Estimated from deterioration and remaining life because installation age is not available.",
+
+        # UI display fields - these remove N/A in RiskCalculator.jsx
+        "condition_risk": likelihood_of_failure,
+        "material_risk": material_risk_level,
+        "environment_risk": "Moderate",
+        "status_risk": status_risk_level,
+
+        # Numeric calculation fields
+        "condition_risk_score": round(condition_risk_score, 3),
+        "material_risk_score": round(material_risk_score, 3),
+        "status_risk_score": round(status_risk_score, 3),
+
+        "explanation": [
+            f"Condition deterioration contribution is {round(condition_risk_score, 3)}.",
+            material_note,
+            status_note,
+            "Environmental/location risk is treated as moderate when detailed soil or climate fields are unavailable.",
+        ],
+    }
+
+    failure_consequence = {
+        "overall": consequence_of_failure,
+
+        # UI display fields - these remove N/A in RiskCalculator.jsx
+        "criticality_impact": consequence_of_failure,
+        "pipe_size_impact": f"{pipe_size} mm",
+        "pipe_length_impact": f"{round(pipe_length, 1)} m",
+        "pressure_zone_impact": f"{pressure_zone} / {category}",
+
+        # Numeric calculation fields
+        "criticality_score": criticality_value,
+        "criticality_risk_score": round(criticality_risk_score, 3),
+        "pipe_size_impact_score": round(diameter_impact_score, 3),
+        "pipe_length_impact_score": round(length_impact_score, 3),
+        "pressure_zone_impact_score": round(pressure_zone_impact_score, 3),
+        "category_impact": category,
+
+        "explanation": [
+            f"Criticality value {criticality_value} drives the consequence level.",
+            f"Pipe size {pipe_size} mm and length {round(pipe_length, 1)} m affect repair impact and service disruption.",
+            f"Pressure zone/category context: {pressure_zone} / {category}.",
+        ],
+    }
+
+    future_warning = {
+        # UI display field - this removes N/A in RiskCalculator.jsx
+        "remaining_useful_life": f"{estimated_remaining_life_years} years",
+
+        # Numeric calculation field
+        "estimated_remaining_useful_life_years": estimated_remaining_life_years,
+
+        "warning_30_day": failure_warning_30_day,
+        "warning_90_day": failure_warning_90_day,
+        "risk_30_day_score": round(risk_30_day, 3),
+        "risk_90_day_score": round(risk_90_day, 3),
+        "risk_trend": enriched.get("risk_trend", "Stable"),
+        "explanation": (
+            f"Short-term warning is based on the current risk score {round(risk_score, 3)}, "
+            f"30-day projected risk {round(risk_30_day, 3)}, and 90-day projected risk {round(risk_90_day, 3)}."
+        ),
+    }
+
+    if enriched["risk_level"] == "High":
+        recommended_action = "Immediate inspection and maintenance planning required."
+        engineering_note = (
+            "This pipeline shows a high engineering risk profile. Immediate inspection is recommended because "
+            "failure likelihood and/or consequence indicators are elevated."
+        )
+    elif enriched["risk_level"] == "Medium":
+        recommended_action = "Schedule preventive inspection within the next maintenance cycle."
+        engineering_note = (
+            "This pipeline is not in immediate failure condition, but deterioration and operational importance "
+            "indicate that it should not be left under routine monitoring only."
+        )
+    else:
+        recommended_action = "Continue routine monitoring and include in the normal inspection cycle."
+        engineering_note = (
+            "This pipeline currently shows a low risk profile. Routine monitoring is suitable unless field "
+            "inspection or new incident data indicates deterioration."
+        )
+
+    action_plan = {
+        "priority_level": maintenance_priority,
+        "recommended_action": recommended_action,
+        "reason_notes": recommendation.get("reasons", []),
+        "engineering_note": engineering_note,
+    }
+
+    main_risk_reasons = [
+        f"Condition score is {condition_score}, classified as {condition_category}.",
+        f"Criticality value is {criticality_value}, giving {consequence_of_failure.lower()} consequence of failure.",
+        f"Material type is {material}.",
+        f"Current status is {status}.",
+        f"Pipe size is {pipe_size} mm and pipe length is {round(pipe_length, 1)} m, affecting failure impact.",
+    ]
+
     return {
+        # Final engineering decision report fields
         "pipeline_id": enriched["pipeline_id"],
+        "overall_risk_level": enriched["risk_level"],
+        "overall_risk_score": round(risk_score, 3),
+        "likelihood_of_failure": likelihood_of_failure,
+        "consequence_of_failure": consequence_of_failure,
+        "health_score": health_score,
+        "estimated_remaining_life_years": estimated_remaining_life_years,
+        "failure_warning_30_day": failure_warning_30_day,
+        "failure_warning_90_day": failure_warning_90_day,
+        "maintenance_priority": maintenance_priority,
+        "main_risk_reasons": main_risk_reasons,
+        "recommended_action": recommended_action,
+        "engineering_note": engineering_note,
+
+        # Full structured diagnosis for UI explanation
+        "diagnosis": {
+            "current_condition": current_condition,
+            "failure_likelihood": failure_likelihood,
+            "failure_consequence": failure_consequence,
+            "future_warning": future_warning,
+            "action_plan": action_plan,
+        },
+
+        # Legacy / other page compatibility fields
         "WATMAINID": enriched.get("WATMAINID"),
         "OBJECTID": enriched.get("OBJECTID"),
         "STATUS": enriched.get("STATUS"),
@@ -528,11 +755,11 @@ def predict_pipeline(pipeline_id: str, persist: bool = False):
         "CONDITION_SCORE": enriched.get("CONDITION_SCORE"),
         "CRITICALITY": enriched.get("CRITICALITY"),
         "Shape__Length": enriched.get("Shape__Length"),
-        "risk_score": enriched["risk_score"],
+        "risk_score": round(risk_score, 3),
         "risk_level": enriched["risk_level"],
         "failure_probability": enriched["failure_probability"],
-        "risk_30_day": enriched["risk_30_day"],
-        "risk_90_day": enriched["risk_90_day"],
+        "risk_30_day": risk_30_day,
+        "risk_90_day": risk_90_day,
         "risk_trend": enriched["risk_trend"],
         "estimated_life_months": enriched["estimated_life_months"],
         "weakest_segment_start_m": enriched["weakest_segment_start_m"],
@@ -542,7 +769,7 @@ def predict_pipeline(pipeline_id: str, persist: bool = False):
         "start_lng": enriched["start_lng"],
         "end_lat": enriched["end_lat"],
         "end_lng": enriched["end_lng"],
-        "recommendation": enriched["recommendation"],
+        "recommendation": recommendation,
     }
 
 

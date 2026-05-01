@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../utils/supabaseClient";
 
 const PAGE_SIZE = 1000;
+const API_BASE_URL = "http://127.0.0.1:8000";
 
 async function fetchAllPipelines() {
   let allRows = [];
@@ -197,26 +198,68 @@ export default function RiskCalculator() {
     };
   }, [pipelines]);
 
-  function handleCalculate() {
-    const risk = calculateDatasetRisk({
-      conditionScore: selectedValues.conditionScore,
-      criticality: selectedValues.criticality,
-    });
+  async function handleCalculate() {
+    try {
+      setLoading(true);
 
-    const failureProbability = Math.round(risk.score * 100);
-    const risk30 = Math.min(0.99, risk.score + 0.04);
-    const risk90 = Math.min(0.99, risk.score + 0.1);
+      // Manual mode fallback only
+      if (manualMode) {
+        const risk = calculateDatasetRisk({
+          conditionScore: selectedValues.conditionScore,
+          criticality: selectedValues.criticality,
+        });
 
-    setResult({
-      ...selectedValues,
-      riskLevel: risk.level,
-      riskScore: risk.score,
-      failureProbability,
-      risk30,
-      risk90,
-      reason: risk.reason,
-      action: getAction(risk.level),
-    });
+        setResult({
+          ...selectedValues,
+          riskLevel: risk.level,
+          riskScore: risk.score,
+          failureProbability: Math.round(risk.score * 100),
+          risk30: risk.level,
+          risk90: risk.level,
+          reason: risk.reason,
+          reasons: [risk.reason],
+          action: getAction(risk.level),
+          engineeringReport: null,
+        });
+
+        return;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/predict/${selectedValues.id}`);
+
+      if (!response.ok) {
+        throw new Error("Backend prediction failed");
+      }
+
+      const report = await response.json();
+
+      setResult({
+        ...selectedValues,
+
+        riskLevel: report.overall_risk_level,
+        riskScore: Number(report.overall_risk_score ?? 0),
+
+        likelihoodOfFailure: report.likelihood_of_failure,
+        consequenceOfFailure: report.consequence_of_failure,
+        healthScore: report.health_score,
+        remainingLife: report.estimated_remaining_life_years,
+
+        warning30: report.failure_warning_30_day,
+        warning90: report.failure_warning_90_day,
+        priority: report.maintenance_priority,
+
+        reasons: report.main_risk_reasons || [],
+        action: report.recommended_action,
+        note: report.engineering_note,
+
+        engineeringReport: report,
+      });
+    } catch (error) {
+      console.error(error);
+      alert("Failed to calculate engineering risk. Make sure backend is running.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -424,7 +467,7 @@ export default function RiskCalculator() {
               >
                 <div>
                   <strong>{Math.round(result.riskScore * 100)}%</strong>
-                  <span>Risk Score</span>
+                  <span>Overall Risk</span>
                 </div>
               </div>
 
@@ -438,16 +481,47 @@ export default function RiskCalculator() {
                 />
                 <ResultRow label="Condition Score" value={result.conditionScore ?? "N/A"} />
                 <ResultRow label="Criticality" value={result.criticality ?? "N/A"} />
-                <ResultRow label="Failure Probability" value={`${result.failureProbability}%`} />
-                <ResultRow label="30 Day Risk" value={result.risk30.toFixed(2)} />
-                <ResultRow label="90 Day Risk" value={result.risk90.toFixed(2)} />
+                <ResultRow
+                  label="Overall Risk Score"
+                  value={`${Number(result.riskScore ?? 0).toFixed(3)} / 1.00`}
+                />
+                <ResultRow label="Likelihood of Failure" value={result.likelihoodOfFailure ?? "N/A"} />
+                <ResultRow label="Consequence of Failure" value={result.consequenceOfFailure ?? "N/A"} />
+                <ResultRow label="Health Score" value={`${result.healthScore ?? "N/A"}%`} />
+                <ResultRow
+                  label="Estimated Remaining Life"
+                  value={`${result.remainingLife ?? "N/A"} years`}
+                />
+                <ResultRow label="30-Day Failure Warning" value={result.warning30 ?? "N/A"} />
+                <ResultRow label="90-Day Failure Warning" value={result.warning90 ?? "N/A"} />
+                <ResultRow label="Maintenance Priority" value={result.priority ?? "N/A"} />
               </div>
 
               <div className="recommendBox">
-                <h3>Recommendation</h3>
-                <p>{result.reason}</p>
+                <h3>Main Risk Reasons</h3>
+
+                {result.reasons?.length ? (
+                  <ol>
+                    {result.reasons.map((reason, index) => (
+                      <li key={index}>{reason}</li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p>No major risk reasons detected.</p>
+                )}
+
+                <h3>Recommended Action</h3>
                 <b>{result.action}</b>
+
+                {result.note && (
+                  <>
+                    <h3>Engineering Note</h3>
+                    <p>{result.note}</p>
+                  </>
+                )}
               </div>
+
+              <EngineeringDiagnosisReport report={result.engineeringReport} />
             </>
           )}
         </div>
@@ -818,15 +892,95 @@ export default function RiskCalculator() {
           color: #123047;
         }
 
-        .recommendBox p {
+        .recommendBox p,
+        .recommendBox li {
           margin: 0 0 10px;
           color: #5f7688;
           font-weight: 700;
           line-height: 1.5;
         }
 
+        .recommendBox ol {
+          margin: 0 0 14px 20px;
+          padding: 0;
+        }
+
         .recommendBox b {
           color: #0b6fa4;
+        }
+
+
+
+        .diagnosisBox {
+          margin-top: 18px;
+          background: #ffffff;
+          border: 1px solid #d7e6ef;
+          border-radius: 18px;
+          padding: 16px;
+        }
+
+        .diagnosisBox h2 {
+          margin: 0 0 6px;
+          color: #123047;
+          font-size: 20px;
+        }
+
+        .diagnosisIntro {
+          margin: 0 0 14px;
+          color: #5f7688;
+          font-weight: 700;
+          line-height: 1.5;
+        }
+
+        .diagnosisGrid {
+          display: grid;
+          gap: 12px;
+        }
+
+        .diagnosisCard {
+          background: #f6fafc;
+          border: 1px solid #d7e6ef;
+          border-radius: 16px;
+          padding: 14px;
+        }
+
+        .diagnosisCard h3 {
+          margin: 0 0 10px;
+          color: #123047;
+          font-size: 15px;
+        }
+
+        .diagnosisRows {
+          display: grid;
+          gap: 8px;
+        }
+
+        .diagnosisItem {
+          display: flex;
+          justify-content: space-between;
+          gap: 14px;
+          border-bottom: 1px solid #e4edf3;
+          padding-bottom: 7px;
+          color: #5f7688;
+          font-weight: 800;
+          font-size: 13px;
+        }
+
+        .diagnosisItem:last-child {
+          border-bottom: none;
+          padding-bottom: 0;
+        }
+
+        .diagnosisItem strong {
+          color: #123047;
+          text-align: right;
+        }
+
+        .diagnosisNote {
+          margin: 10px 0 0;
+          color: #5f7688;
+          font-weight: 700;
+          line-height: 1.55;
         }
 
         @keyframes fadeIn {
@@ -903,6 +1057,178 @@ function PreviewItem({ label, value }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function EngineeringDiagnosisReport({ report }) {
+  const diagnosis = report?.diagnosis;
+
+  if (!diagnosis) return null;
+
+  const current = diagnosis.current_condition || {};
+  const likelihood = diagnosis.failure_likelihood || {};
+  const consequence = diagnosis.failure_consequence || {};
+  const warning = diagnosis.future_warning || {};
+  const action = diagnosis.action_plan || {};
+
+  return (
+    <div className="diagnosisBox">
+      <h2>Engineering Diagnosis Report</h2>
+      <p className="diagnosisIntro">
+        This report explains how the final risk result was calculated and supports
+        maintenance decision-making using current condition, failure likelihood,
+        consequence, future warning and action planning.
+      </p>
+
+      <div className="diagnosisGrid">
+        <DiagnosisCard
+          title="1. Current Condition"
+          items={[
+            ["Actual Condition Score", current.condition_score],
+            ["Health Score", formatPercent(current.health_score)],
+            ["Condition Category", current.condition_category],
+          ]}
+        />
+
+        <DiagnosisCard
+          title="2. Failure Likelihood"
+          items={[
+            ["Age Risk", likelihood.age_risk ?? likelihood.estimated_age_risk ?? "Dataset based"],
+            [
+              "Condition Risk",
+              likelihood.condition_risk ??
+                likelihood.condition_risk_level ??
+                scoreToLevel(likelihood.condition_risk_score),
+            ],
+            [
+              "Material Risk",
+              likelihood.material_risk ??
+                likelihood.material_risk_level ??
+                scoreToLevel(likelihood.material_risk_score),
+            ],
+            ["Environment Risk", likelihood.environment_risk ?? likelihood.location_risk ?? "Moderate"],
+            [
+              "Status Risk",
+              likelihood.status_risk ??
+                likelihood.status_risk_level ??
+                scoreToLevel(likelihood.status_risk_score),
+            ],
+          ]}
+        />
+
+        <DiagnosisCard
+          title="3. Failure Consequence"
+          items={[
+            [
+              "Criticality Impact",
+              consequence.criticality_impact ??
+                consequence.overall ??
+                scoreToLevel((consequence.criticality_score ?? 0) / 10),
+            ],
+            [
+              "Pipe Size Impact",
+              consequence.pipe_size_impact ??
+                scoreToLevel(consequence.pipe_size_impact_score) ??
+                consequence.pipe_size,
+            ],
+            [
+              "Pipe Length Impact",
+              consequence.pipe_length_impact ??
+                scoreToLevel(consequence.pipe_length_impact_score) ??
+                consequence.pipe_length,
+            ],
+            [
+              "Pressure Zone / Category Impact",
+              formatZoneCategory(
+                consequence.pressure_zone_impact ?? consequence.pressure_zone,
+                consequence.category_impact
+              ),
+            ],
+          ]}
+        />
+
+        <DiagnosisCard
+          title="4. Future Warning"
+          items={[
+            [
+              "Remaining Useful Life",
+              formatYears(
+                warning.estimated_remaining_useful_life_years ??
+                  warning.remaining_useful_life ??
+                  warning.remaining_life_years
+              ),
+            ],
+            ["30-Day Warning", warning.warning_30_day ?? warning.failure_warning_30_day ?? warning.risk_30_day],
+            ["90-Day Warning", warning.warning_90_day ?? warning.failure_warning_90_day ?? warning.risk_90_day],
+            ["Risk Trend", warning.risk_trend],
+          ]}
+        />
+
+        <div className="diagnosisCard">
+          <h3>5. Action Plan</h3>
+          <div className="diagnosisRows">
+            <DiagnosisItem
+              label="Priority Level"
+              value={action.priority_level ?? action.priority}
+            />
+            <DiagnosisItem label="Recommended Action" value={action.recommended_action} />
+          </div>
+          {(action.engineering_note || action.note) && (
+            <p className="diagnosisNote">{action.engineering_note || action.note}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DiagnosisCard({ title, items }) {
+  return (
+    <div className="diagnosisCard">
+      <h3>{title}</h3>
+      <div className="diagnosisRows">
+        {items.map(([label, value]) => (
+          <DiagnosisItem key={label} label={label} value={value} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DiagnosisItem({ label, value }) {
+  return (
+    <div className="diagnosisItem">
+      <span>{label}</span>
+      <strong>{value ?? "N/A"}</strong>
+    </div>
+  );
+}
+
+function formatPercent(value) {
+  if (value === null || value === undefined || value === "") return "N/A";
+  return `${value}%`;
+}
+
+function formatYears(value) {
+  if (value === null || value === undefined || value === "") return "N/A";
+  return `${value} years`;
+}
+
+function scoreToLevel(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  if (Number.isNaN(n)) return value;
+  if (n >= 0.7) return "High";
+  if (n >= 0.4) return "Medium";
+  return "Low";
+}
+
+function formatZoneCategory(zone, category) {
+  const hasZone = zone !== null && zone !== undefined && zone !== "";
+  const hasCategory = category !== null && category !== undefined && category !== "";
+  if (hasZone && hasCategory) return `${zone} / ${category}`;
+  if (hasZone) return zone;
+  if (hasCategory) return category;
+  return "N/A";
 }
 
 function ResultRow({ label, value }) {
