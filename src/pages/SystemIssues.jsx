@@ -1,40 +1,15 @@
-import { useMemo, useState } from "react";
-
-const initialIssues = [
-  {
-    id: "ISS-001",
-    title: "Engineer login delay",
-    type: "Authentication",
-    priority: "High",
-    status: "Open",
-    reportedBy: "Kasun Perera",
-    reportedDate: "2026-04-20",
-    description: "Engineer portal takes too long to redirect after login.",
-  },
-  {
-    id: "ISS-002",
-    title: "Risk chart not loading",
-    type: "Dashboard",
-    priority: "Medium",
-    status: "In Progress",
-    reportedBy: "System Monitor",
-    reportedDate: "2026-04-22",
-    description: "Analytics chart sometimes fails to render on dashboard.",
-  },
-  {
-    id: "ISS-003",
-    title: "Email reset alert not received",
-    type: "Email Service",
-    priority: "Low",
-    status: "Resolved",
-    reportedBy: "Admin",
-    reportedDate: "2026-04-23",
-    description: "Forgot password verification email was delayed.",
-  },
-];
+import { useEffect, useMemo, useState } from "react";
+import {
+  fetchSystemIssues,
+  insertSystemIssue,
+  updateSystemIssue,
+  deleteSystemIssue,
+  insertAuditLog,
+} from "../utils/databaseService";
 
 export default function SystemIssues() {
-  const [issues, setIssues] = useState(initialIssues);
+  const [issues, setIssues] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
   const [form, setForm] = useState({
@@ -42,22 +17,40 @@ export default function SystemIssues() {
     type: "Authentication",
     priority: "Medium",
     status: "Open",
-    reportedBy: "",
-    reportedDate: "",
+    reported_by: "",
+    reported_date: "",
     description: "",
   });
+
+  // Load system issues from Supabase on mount
+  useEffect(() => {
+    async function loadIssues() {
+      try {
+        setLoading(true);
+        const data = await fetchSystemIssues();
+        setIssues(data);
+      } catch (err) {
+        console.error("Failed to load system issues:", err);
+        setIssues([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadIssues();
+  }, []);
 
   const filteredIssues = useMemo(() => {
     const keyword = search.toLowerCase();
 
     return issues.filter(
       (issue) =>
-        issue.id.toLowerCase().includes(keyword) ||
-        issue.title.toLowerCase().includes(keyword) ||
-        issue.type.toLowerCase().includes(keyword) ||
-        issue.priority.toLowerCase().includes(keyword) ||
-        issue.status.toLowerCase().includes(keyword) ||
-        issue.reportedBy.toLowerCase().includes(keyword)
+        (issue.id || "").toLowerCase().includes(keyword) ||
+        (issue.title || "").toLowerCase().includes(keyword) ||
+        (issue.type || "").toLowerCase().includes(keyword) ||
+        (issue.priority || "").toLowerCase().includes(keyword) ||
+        (issue.status || "").toLowerCase().includes(keyword) ||
+        (issue.reported_by || "").toLowerCase().includes(keyword)
     );
   }, [issues, search]);
 
@@ -83,13 +76,13 @@ export default function SystemIssues() {
       type: "Authentication",
       priority: "Medium",
       status: "Open",
-      reportedBy: "",
-      reportedDate: "",
+      reported_by: "",
+      reported_date: "",
       description: "",
     });
   };
 
-  const addIssue = (e) => {
+  const addIssue = async (e) => {
     e.preventDefault();
 
     const newIssue = {
@@ -97,21 +90,69 @@ export default function SystemIssues() {
       ...form,
     };
 
-    setIssues((prev) => [newIssue, ...prev]);
-    resetForm();
+    try {
+      await insertSystemIssue(newIssue);
+
+      await insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: localStorage.getItem("waterflow_user") || "Admin",
+        role: "Administrator",
+        action: `Created system issue ${newIssue.id} — ${newIssue.title}`,
+        module: "System Issues",
+        status: "Success",
+      });
+
+      setIssues((prev) => [newIssue, ...prev]);
+      resetForm();
+    } catch (err) {
+      console.error("Failed to create issue:", err);
+      alert("Failed to create issue. Check console.");
+    }
   };
 
-  const updateStatus = (id, status) => {
-    setIssues((prev) =>
-      prev.map((issue) => (issue.id === id ? { ...issue, status } : issue))
-    );
+  const updateStatus = async (id, status) => {
+    try {
+      await updateSystemIssue(id, { status });
+
+      await insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: localStorage.getItem("waterflow_user") || "Admin",
+        role: "Administrator",
+        action: `Updated issue ${id} status to ${status}`,
+        module: "System Issues",
+        status: "Success",
+      });
+
+      setIssues((prev) =>
+        prev.map((issue) => (issue.id === id ? { ...issue, status } : issue))
+      );
+    } catch (err) {
+      console.error("Failed to update issue status:", err);
+      alert("Failed to update issue. Check console.");
+    }
   };
 
-  const deleteIssue = (id) => {
+  const handleDeleteIssue = async (id) => {
     const ok = window.confirm("Are you sure you want to delete this issue?");
     if (!ok) return;
 
-    setIssues((prev) => prev.filter((issue) => issue.id !== id));
+    try {
+      await deleteSystemIssue(id);
+
+      await insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: localStorage.getItem("waterflow_user") || "Admin",
+        role: "Administrator",
+        action: `Deleted system issue ${id}`,
+        module: "System Issues",
+        status: "Success",
+      });
+
+      setIssues((prev) => prev.filter((issue) => issue.id !== id));
+    } catch (err) {
+      console.error("Failed to delete issue:", err);
+      alert("Failed to delete issue. Check console.");
+    }
   };
 
   return (
@@ -122,7 +163,7 @@ export default function SystemIssues() {
           <h1 style={styles.title}>System Issues</h1>
           <p style={styles.subtitle}>
             Track login problems, system errors, email failures, dashboard bugs
-            and technical support issues.
+            and technical support issues. All data stored in Supabase.
           </p>
         </div>
 
@@ -197,9 +238,9 @@ export default function SystemIssues() {
 
               <Input
                 label="Reported Date"
-                name="reportedDate"
+                name="reported_date"
                 type="date"
-                value={form.reportedDate}
+                value={form.reported_date}
                 onChange={handleChange}
                 required
               />
@@ -207,9 +248,9 @@ export default function SystemIssues() {
 
             <Input
               label="Reported By"
-              name="reportedBy"
+              name="reported_by"
               placeholder="Admin / Engineer / System Monitor"
-              value={form.reportedBy}
+              value={form.reported_by}
               onChange={handleChange}
               required
             />
@@ -237,7 +278,7 @@ export default function SystemIssues() {
             <div>
               <h2 style={styles.cardTitle}>Issue Tickets</h2>
               <p style={styles.tableSub}>
-                Monitor and update system maintenance issues.
+                Monitor and update system maintenance issues — stored in Supabase.
               </p>
             </div>
 
@@ -249,80 +290,84 @@ export default function SystemIssues() {
             />
           </div>
 
-          <div style={styles.table}>
-            <div style={styles.tableHead}>
-              <span>Ticket</span>
-              <span>Issue</span>
-              <span>Type</span>
-              <span>Priority</span>
-              <span>Status</span>
-              <span>Actions</span>
-            </div>
-
-            {filteredIssues.map((issue) => (
-              <div style={styles.tableRow} key={issue.id}>
-                <span style={styles.id}>{issue.id}</span>
-
-                <div>
-                  <strong>{issue.title}</strong>
-                  <p style={styles.small}>{issue.description}</p>
-                  <p style={styles.smallLight}>
-                    Reported by {issue.reportedBy} • {issue.reportedDate}
-                  </p>
-                </div>
-
-                <span>{issue.type}</span>
-
-                <span
-                  style={{
-                    ...styles.badgePill,
-                    ...getPriorityStyle(issue.priority),
-                  }}
-                >
-                  {issue.priority}
-                </span>
-
-                <span
-                  style={{
-                    ...styles.badgePill,
-                    ...getStatusStyle(issue.status),
-                  }}
-                >
-                  {issue.status}
-                </span>
-
-                <div style={styles.actions}>
-                  <button
-                    type="button"
-                    onClick={() => updateStatus(issue.id, "In Progress")}
-                    style={styles.progressBtn}
-                  >
-                    Progress
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => updateStatus(issue.id, "Resolved")}
-                    style={styles.resolveBtn}
-                  >
-                    Resolve
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => deleteIssue(issue.id)}
-                    style={styles.deleteBtn}
-                  >
-                    Delete
-                  </button>
-                </div>
+          {loading ? (
+            <div style={styles.empty}>Loading system issues from database...</div>
+          ) : (
+            <div style={styles.table}>
+              <div style={styles.tableHead}>
+                <span>Ticket</span>
+                <span>Issue</span>
+                <span>Type</span>
+                <span>Priority</span>
+                <span>Status</span>
+                <span>Actions</span>
               </div>
-            ))}
 
-            {filteredIssues.length === 0 && (
-              <div style={styles.empty}>No system issues found.</div>
-            )}
-          </div>
+              {filteredIssues.map((issue) => (
+                <div style={styles.tableRow} key={issue.id}>
+                  <span style={styles.id}>{issue.id}</span>
+
+                  <div>
+                    <strong>{issue.title}</strong>
+                    <p style={styles.small}>{issue.description}</p>
+                    <p style={styles.smallLight}>
+                      Reported by {issue.reported_by} • {issue.reported_date}
+                    </p>
+                  </div>
+
+                  <span>{issue.type}</span>
+
+                  <span
+                    style={{
+                      ...styles.badgePill,
+                      ...getPriorityStyle(issue.priority),
+                    }}
+                  >
+                    {issue.priority}
+                  </span>
+
+                  <span
+                    style={{
+                      ...styles.badgePill,
+                      ...getStatusStyle(issue.status),
+                    }}
+                  >
+                    {issue.status}
+                  </span>
+
+                  <div style={styles.actions}>
+                    <button
+                      type="button"
+                      onClick={() => updateStatus(issue.id, "In Progress")}
+                      style={styles.progressBtn}
+                    >
+                      Progress
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => updateStatus(issue.id, "Resolved")}
+                      style={styles.resolveBtn}
+                    >
+                      Resolve
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteIssue(issue.id)}
+                      style={styles.deleteBtn}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {filteredIssues.length === 0 && (
+                <div style={styles.empty}>No system issues found.</div>
+              )}
+            </div>
+          )}
         </section>
       </div>
     </div>

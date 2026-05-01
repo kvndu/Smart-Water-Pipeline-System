@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { insertAuditLog } from "../utils/databaseService";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -49,8 +50,28 @@ const Login = () => {
       localStorage.setItem("waterflow_role", selectedAccount.roleName);
       localStorage.setItem("waterflow_user", selectedAccount.userName);
 
+      // Log successful login to audit_logs
+      insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: selectedAccount.userName,
+        role: selectedAccount.roleName,
+        action: "Logged into system",
+        module: "Authentication",
+        status: "Success",
+      }).catch((err) => console.error("Audit log error:", err));
+
       navigate(selectedAccount.redirectPath, { replace: true });
     } else {
+      // Log failed login attempt
+      insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: email || "Unknown User",
+        role: "Unknown",
+        action: "Failed login attempt",
+        module: "Authentication",
+        status: "Failed",
+      }).catch((err) => console.error("Audit log error:", err));
+
       alert(`Invalid ${selectedAccount.roleName} email or password`);
     }
   };

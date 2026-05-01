@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../utils/supabaseClient";
+import {
+  fetchMaintenanceLogs,
+  insertMaintenanceLog,
+  fetchAllMaintenanceStatuses,
+  upsertMaintenanceStatus,
+  insertAuditLog,
+} from "../utils/databaseService";
 
-const LS_LOGS_KEY = "pipeguard_maintenance_logs";
-const LS_STATUS_KEY = "pipeguard_maintenance_statuses";
 const PAGE_SIZE = 1000;
 
 function num(v) {
@@ -71,14 +76,6 @@ function badgeColor(value) {
   return "#0284c7";
 }
 
-function loadJson(key, fallback) {
-  try {
-    return JSON.parse(localStorage.getItem(key)) || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 async function fetchAllPipelines() {
   let allRows = [];
   let from = 0;
@@ -106,8 +103,8 @@ async function fetchAllPipelines() {
 
 export default function Maintenance() {
   const [pipelines, setPipelines] = useState([]);
-  const [logs, setLogs] = useState(() => loadJson(LS_LOGS_KEY, []));
-  const [statusMap, setStatusMap] = useState(() => loadJson(LS_STATUS_KEY, {}));
+  const [logs, setLogs] = useState([]);
+  const [statusMap, setStatusMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
@@ -127,8 +124,15 @@ export default function Maintenance() {
         setLoading(true);
         setLoadError("");
 
-        const rows = await fetchAllPipelines();
+        const [rows, dbLogs, dbStatuses] = await Promise.all([
+          fetchAllPipelines(),
+          fetchMaintenanceLogs(),
+          fetchAllMaintenanceStatuses(),
+        ]);
+
         setPipelines(rows);
+        setLogs(dbLogs);
+        setStatusMap(dbStatuses);
       } catch (error) {
         console.error("Maintenance fetch error:", error);
         setLoadError(error.message || "Failed to load maintenance data.");
@@ -140,14 +144,6 @@ export default function Maintenance() {
 
     loadData();
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem(LS_LOGS_KEY, JSON.stringify(logs));
-  }, [logs]);
-
-  useEffect(() => {
-    localStorage.setItem(LS_STATUS_KEY, JSON.stringify(statusMap));
-  }, [statusMap]);
 
   const enrichedPipelines = useMemo(() => {
     return pipelines.map((p) => {
@@ -202,16 +198,33 @@ export default function Maintenance() {
     };
   }, [enrichedPipelines, logs]);
 
-  function updateStatus(watmainid, status) {
+  async function updateStatus(watmainid, status) {
     const id = String(watmainid);
 
-    setStatusMap((prev) => ({
-      ...prev,
-      [id]: status,
-    }));
+    try {
+      await upsertMaintenanceStatus(id, status);
+
+      setStatusMap((prev) => ({
+        ...prev,
+        [id]: status,
+      }));
+
+      // Log the action to audit_logs
+      await insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: localStorage.getItem("waterflow_user") || "Engineer",
+        role: localStorage.getItem("waterflow_role") || "Engineer",
+        action: `Changed pipeline ${id} status to ${status}`,
+        module: "Maintenance",
+        status: "Success",
+      });
+    } catch (err) {
+      console.error("Failed to update status:", err);
+      alert("Failed to update status. Check console.");
+    }
   }
 
-  function completeRepair(p) {
+  async function completeRepair(p) {
     if (!repairCost || Number(repairCost) < 0) {
       alert("Please enter repair cost.");
       return;
@@ -224,26 +237,44 @@ export default function Maintenance() {
 
     const log = {
       id: `LOG-${Date.now()}`,
-      watmainid: id,
-      objectId: p.OBJECTID,
-      material: p.MATERIAL,
-      pipeSize: p.PIPE_SIZE || p.MAP_LABEL,
-      zone: p.PRESSURE_ZONE,
-      oldRisk: p.risk,
-      newRisk: condition !== null && condition + 2 > 7 ? "LOW" : p.risk,
-      oldCondition: condition ?? "N/A",
-      newCondition,
-      repairType,
+      watmainid: String(id),
+      object_id: String(p.OBJECTID || ""),
+      material: p.MATERIAL || "",
+      pipe_size: p.PIPE_SIZE || p.MAP_LABEL || "",
+      pressure_zone: p.PRESSURE_ZONE || "",
+      old_risk: p.risk,
+      new_risk: condition !== null && condition + 2 > 7 ? "LOW" : p.risk,
+      old_condition: String(condition ?? "N/A"),
+      new_condition: String(newCondition),
+      repair_type: repairType,
       cost: Number(repairCost),
       note,
-      completedAt: new Date().toLocaleString(),
+      completed_by: localStorage.getItem("waterflow_user") || "Engineer",
     };
 
-    setLogs((prev) => [log, ...prev]);
-    updateStatus(id, "COMPLETED");
-    setActiveTask(null);
-    setRepairCost("");
-    setNote("");
+    try {
+      await insertMaintenanceLog(log);
+      await upsertMaintenanceStatus(String(id), "COMPLETED");
+
+      // Log to audit
+      await insertAuditLog({
+        id: `LOG-${Date.now() + 1}`,
+        user_name: localStorage.getItem("waterflow_user") || "Engineer",
+        role: localStorage.getItem("waterflow_role") || "Engineer",
+        action: `Completed repair on pipeline ${id} — Cost: Rs. ${repairCost}`,
+        module: "Maintenance",
+        status: "Success",
+      });
+
+      setLogs((prev) => [log, ...prev]);
+      setStatusMap((prev) => ({ ...prev, [String(id)]: "COMPLETED" }));
+      setActiveTask(null);
+      setRepairCost("");
+      setNote("");
+    } catch (err) {
+      console.error("Failed to complete repair:", err);
+      alert("Failed to save repair. Check console.");
+    }
   }
 
   if (loading) {
@@ -273,6 +304,7 @@ export default function Maintenance() {
           <span>{stats.total.toLocaleString()} assets</span>
           <span>{stats.critical.toLocaleString()} critical</span>
           <span>{stats.completed.toLocaleString()} completed</span>
+          <span className="dbBadge">✅ Supabase Connected</span>
         </div>
       </div>
 
@@ -289,7 +321,7 @@ export default function Maintenance() {
         <div className="panelHead">
           <div>
             <h2>Maintenance Scheduler</h2>
-            <p>Search, filter and manage maintenance workflow.</p>
+            <p>Search, filter and manage maintenance workflow. All changes are saved to Supabase.</p>
           </div>
         </div>
 
@@ -439,7 +471,7 @@ export default function Maintenance() {
         <div className="panelHead">
           <div>
             <h2>Maintenance Logs</h2>
-            <p>Completed maintenance history with before/after risk summary.</p>
+            <p>Completed maintenance history stored in Supabase database.</p>
           </div>
         </div>
 
@@ -451,22 +483,23 @@ export default function Maintenance() {
               <div key={log.id} className="logCard">
                 <div className="logTop">
                   <strong>{log.id}</strong>
-                  <span>{log.completedAt}</span>
+                  <span>{log.completed_at ? new Date(log.completed_at).toLocaleString() : log.completedAt}</span>
                 </div>
                 <h3>Pipeline #{log.watmainid}</h3>
                 <p>
-                  {log.material} • {log.pipeSize} • {log.zone}
+                  {log.material} • {log.pipe_size} • {log.pressure_zone}
                 </p>
                 <div className="logInfo">
-                  <div>Repair: {log.repairType}</div>
+                  <div>Repair: {log.repair_type || log.repairType}</div>
                   <div>
-                    Risk: {log.oldRisk} → {log.newRisk}
+                    Risk: {log.old_risk || log.oldRisk} → {log.new_risk || log.newRisk}
                   </div>
                   <div>
-                    Condition: {log.oldCondition} → {log.newCondition}
+                    Condition: {log.old_condition || log.oldCondition} → {log.new_condition || log.newCondition}
                   </div>
                   <div>Cost: Rs. {Number(log.cost || 0).toLocaleString()}</div>
                   {log.note && <div>Note: {log.note}</div>}
+                  {(log.completed_by || log.completedBy) && <div>By: {log.completed_by || log.completedBy}</div>}
                 </div>
               </div>
             ))}
@@ -527,6 +560,12 @@ export default function Maintenance() {
           font-size: 12px;
           font-weight: 900;
           color: #0f172a;
+        }
+
+        .dbBadge {
+          background: #dcfce7 !important;
+          border-color: #86efac !important;
+          color: #166534 !important;
         }
 
         .kpiGrid {

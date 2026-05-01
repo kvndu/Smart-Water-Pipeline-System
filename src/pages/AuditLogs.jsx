@@ -1,71 +1,38 @@
-import { useMemo, useState } from "react";
-
-const initialLogs = [
-  {
-    id: "LOG-001",
-    user: "System Admin",
-    role: "Administrator",
-    action: "Logged into system",
-    module: "Authentication",
-    date: "2026-04-25",
-    time: "09:10 AM",
-    status: "Success",
-  },
-  {
-    id: "LOG-002",
-    user: "System Admin",
-    role: "Administrator",
-    action: "Created engineer account",
-    module: "Engineer Management",
-    date: "2026-04-25",
-    time: "09:25 AM",
-    status: "Success",
-  },
-  {
-    id: "LOG-003",
-    user: "Field Engineer",
-    role: "Engineer",
-    action: "Updated pipeline data",
-    module: "Pipelines",
-    date: "2026-04-25",
-    time: "10:05 AM",
-    status: "Success",
-  },
-  {
-    id: "LOG-004",
-    user: "System Admin",
-    role: "Administrator",
-    action: "Resolved system issue",
-    module: "System Issues",
-    date: "2026-04-25",
-    time: "10:30 AM",
-    status: "Success",
-  },
-  {
-    id: "LOG-005",
-    user: "Unknown User",
-    role: "Unknown",
-    action: "Failed login attempt",
-    module: "Authentication",
-    date: "2026-04-25",
-    time: "11:02 AM",
-    status: "Failed",
-  },
-];
+import { useEffect, useMemo, useState } from "react";
+import { fetchAuditLogs } from "../utils/databaseService";
 
 export default function AuditLogs() {
-  const [logs, setLogs] = useState(initialLogs);
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+
+  // Load audit logs from Supabase on mount
+  useEffect(() => {
+    async function loadLogs() {
+      try {
+        setLoading(true);
+        const data = await fetchAuditLogs();
+        setLogs(data);
+      } catch (err) {
+        console.error("Failed to load audit logs:", err);
+        setLogs([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadLogs();
+  }, []);
 
   const filteredLogs = useMemo(() => {
     const keyword = search.toLowerCase();
 
     return logs.filter(
       (log) =>
-        log.user.toLowerCase().includes(keyword) ||
-        log.action.toLowerCase().includes(keyword) ||
-        log.module.toLowerCase().includes(keyword) ||
-        log.status.toLowerCase().includes(keyword)
+        (log.user_name || "").toLowerCase().includes(keyword) ||
+        (log.action || "").toLowerCase().includes(keyword) ||
+        (log.module || "").toLowerCase().includes(keyword) ||
+        (log.status || "").toLowerCase().includes(keyword)
     );
   }, [logs, search]);
 
@@ -85,6 +52,7 @@ export default function AuditLogs() {
           <h1 style={styles.title}>Audit Logs</h1>
           <p style={styles.subtitle}>
             Track all user activities, system actions, and security events.
+            All logs are stored in and loaded from Supabase.
           </p>
         </div>
 
@@ -108,7 +76,7 @@ export default function AuditLogs() {
           <div>
             <h2 style={styles.cardTitle}>System Activity Logs</h2>
             <p style={styles.tableSub}>
-              Monitor login activity, user actions, and system operations.
+              Monitor login activity, user actions, and system operations — powered by Supabase.
             </p>
           </div>
 
@@ -120,50 +88,56 @@ export default function AuditLogs() {
           />
         </div>
 
-        <div style={styles.table}>
-          <div style={styles.tableHead}>
-            <span>ID</span>
-            <span>User</span>
-            <span>Action</span>
-            <span>Module</span>
-            <span>Date & Time</span>
-            <span>Status</span>
-          </div>
-
-          {filteredLogs.map((log) => (
-            <div style={styles.tableRow} key={log.id}>
-              <span style={styles.id}>{log.id}</span>
-
-              <div>
-                <strong>{log.user}</strong>
-                <p style={styles.small}>{log.role}</p>
-              </div>
-
-              <span>{log.action}</span>
-              <span>{log.module}</span>
-
-              <div>
-                <strong>{log.date}</strong>
-                <p style={styles.smallLight}>{log.time}</p>
-              </div>
-
-              <span
-                style={{
-                  ...styles.status,
-                  ...(log.status === "Success"
-                    ? styles.success
-                    : styles.failed),
-                }}
-              >
-                {log.status}
-              </span>
+        {loading ? (
+          <div style={styles.empty}>Loading audit logs from database...</div>
+        ) : (
+          <div style={styles.table}>
+            <div style={styles.tableHead}>
+              <span>ID</span>
+              <span>User</span>
+              <span>Action</span>
+              <span>Module</span>
+              <span>Date & Time</span>
+              <span>Status</span>
             </div>
-          ))}
 
-          {filteredLogs.length === 0 && (
-            <div style={styles.empty}>No logs found.</div>
-          )}
-        </div>
+            {filteredLogs.map((log) => (
+              <div style={styles.tableRow} key={log.id}>
+                <span style={styles.id}>{log.id}</span>
+
+                <div>
+                  <strong>{log.user_name}</strong>
+                  <p style={styles.small}>{log.role}</p>
+                </div>
+
+                <span>{log.action}</span>
+                <span>{log.module}</span>
+
+                <div>
+                  <strong>{log.created_at ? new Date(log.created_at).toLocaleDateString() : "N/A"}</strong>
+                  <p style={styles.smallLight}>
+                    {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ""}
+                  </p>
+                </div>
+
+                <span
+                  style={{
+                    ...styles.status,
+                    ...(log.status === "Success"
+                      ? styles.success
+                      : styles.failed),
+                  }}
+                >
+                  {log.status}
+                </span>
+              </div>
+            ))}
+
+            {filteredLogs.length === 0 && (
+              <div style={styles.empty}>No logs found.</div>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );
@@ -205,13 +179,25 @@ const styles = {
     background: "#fff",
     padding: "16px",
     borderRadius: "20px",
+    display: "flex",
+    alignItems: "center",
+    gap: "14px",
+    boxShadow: "0 12px 30px rgba(15,23,42,0.08)",
+    border: "1px solid #e2e8f0",
   },
   headerIcon: {
-    fontSize: "24px",
+    width: "48px",
+    height: "48px",
+    borderRadius: "16px",
+    background: "linear-gradient(135deg, #0284c7, #0f766e)",
+    display: "grid",
+    placeItems: "center",
+    fontSize: "23px",
   },
   headerText: {
     fontSize: "12px",
     color: "#64748b",
+    margin: 0,
   },
   statsGrid: {
     display: "grid",
@@ -223,35 +209,56 @@ const styles = {
     background: "#fff",
     padding: "20px",
     borderRadius: "20px",
+    boxShadow: "0 12px 30px rgba(15,23,42,0.08)",
+    border: "1px solid #e2e8f0",
   },
   statLabel: {
     color: "#64748b",
+    margin: 0,
+    fontWeight: 800,
+    fontSize: "13px",
   },
   statValue: {
     fontSize: "28px",
     fontWeight: 900,
+    margin: "12px 0 0",
   },
   card: {
     background: "#fff",
     padding: "20px",
     borderRadius: "20px",
+    boxShadow: "0 12px 30px rgba(15,23,42,0.08)",
+    border: "1px solid #e2e8f0",
   },
   tableTop: {
     display: "flex",
     justifyContent: "space-between",
     marginBottom: "16px",
   },
+  cardTitle: {
+    margin: 0,
+    color: "#0f172a",
+    fontSize: "22px",
+    fontWeight: 900,
+  },
+  tableSub: {
+    margin: "6px 0 0",
+    color: "#64748b",
+    fontSize: "14px",
+  },
   tableHead: {
     display: "grid",
     gridTemplateColumns: "1fr 2fr 2fr 1.5fr 1.5fr 1fr",
     fontWeight: 900,
     color: "#64748b",
+    padding: "12px 16px",
   },
   tableRow: {
     display: "grid",
     gridTemplateColumns: "1fr 2fr 2fr 1.5fr 1.5fr 1fr",
-    padding: "12px 0",
+    padding: "12px 16px",
     borderBottom: "1px solid #eee",
+    alignItems: "center",
   },
   id: {
     color: "#0284c7",
@@ -260,16 +267,19 @@ const styles = {
   small: {
     fontSize: "12px",
     color: "#64748b",
+    margin: "4px 0 0",
   },
   smallLight: {
     fontSize: "11px",
     color: "#94a3b8",
+    margin: "4px 0 0",
   },
   status: {
     padding: "6px 10px",
     borderRadius: "10px",
     textAlign: "center",
     fontWeight: 900,
+    fontSize: "12px",
   },
   success: {
     background: "#dcfce7",
@@ -280,13 +290,21 @@ const styles = {
     color: "#991b1b",
   },
   search: {
-    padding: "10px",
-    borderRadius: "10px",
-    border: "1px solid #ccc",
+    padding: "10px 14px",
+    borderRadius: "14px",
+    border: "1px solid #cbd5e1",
+    outline: "none",
+    fontWeight: 700,
+    width: "270px",
+    background: "#f8fafc",
   },
   empty: {
     textAlign: "center",
     padding: "20px",
     color: "#64748b",
+    fontWeight: 800,
+  },
+  table: {
+    minWidth: "900px",
   },
 };

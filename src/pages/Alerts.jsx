@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../utils/supabaseClient";
+import {
+  fetchIncidents,
+  insertIncident,
+  insertAuditLog,
+} from "../utils/databaseService";
 
-const LS_KEY = "pipeguard_incidents";
 const TYPES = ["LEAK", "BURST", "PRESSURE_DROP", "LOW_FLOW"];
 
 function getNum(value) {
@@ -85,13 +89,7 @@ function buildAlerts(pipelines) {
 export default function Alerts() {
   const [pipelines, setPipelines] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [incidents, setIncidents] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem(LS_KEY)) || [];
-    } catch {
-      return [];
-    }
-  });
+  const [incidents, setIncidents] = useState([]);
 
   const [form, setForm] = useState({
     pipelineId: "",
@@ -103,30 +101,34 @@ export default function Alerts() {
   const [riskFilter, setRiskFilter] = useState("ALL");
 
   useEffect(() => {
-    async function loadPipelines() {
+    async function loadData() {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from("pipelines")
-        .select("*")
-        .limit(1000);
+      try {
+        const [pipelineResult, dbIncidents] = await Promise.all([
+          supabase.from("pipelines").select("*").limit(1000),
+          fetchIncidents(),
+        ]);
 
-      if (error) {
-        console.error("Alerts fetch error:", error);
+        if (pipelineResult.error) {
+          console.error("Alerts fetch error:", pipelineResult.error);
+          setPipelines([]);
+        } else {
+          setPipelines(pipelineResult.data || []);
+        }
+
+        setIncidents(dbIncidents);
+      } catch (err) {
+        console.error("Failed to load alerts data:", err);
         setPipelines([]);
-      } else {
-        setPipelines(data || []);
+        setIncidents([]);
       }
 
       setLoading(false);
     }
 
-    loadPipelines();
+    loadData();
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem(LS_KEY, JSON.stringify(incidents));
-  }, [incidents]);
 
   const autoAlerts = useMemo(() => buildAlerts(pipelines), [pipelines]);
 
@@ -158,7 +160,7 @@ export default function Alerts() {
     };
   }, [autoAlerts, incidents]);
 
-  function createIncident(e) {
+  async function createIncident(e) {
     e.preventDefault();
 
     const selected = pipelines.find(
@@ -172,18 +174,36 @@ export default function Alerts() {
 
     const incident = {
       id: `INC-${Date.now()}`,
-      pipelineId: selected.WATMAINID || selected.OBJECTID,
+      pipeline_id: String(selected.WATMAINID || selected.OBJECTID),
       type: form.type,
       risk: getRisk(selected),
       material: selected.MATERIAL || "Unknown",
-      pipeSize: selected.PIPE_SIZE || selected.MAP_LABEL || "N/A",
-      zone: selected.PRESSURE_ZONE || "Unknown zone",
+      pipe_size: selected.PIPE_SIZE || selected.MAP_LABEL || "N/A",
+      pressure_zone: selected.PRESSURE_ZONE || "Unknown zone",
       note: form.note,
-      createdAt: new Date().toLocaleString(),
+      status: "OPEN",
+      created_by: localStorage.getItem("waterflow_user") || "Engineer",
     };
 
-    setIncidents((prev) => [incident, ...prev]);
-    setForm({ pipelineId: "", type: "LEAK", note: "" });
+    try {
+      await insertIncident(incident);
+
+      // Log to audit
+      await insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: localStorage.getItem("waterflow_user") || "Engineer",
+        role: localStorage.getItem("waterflow_role") || "Engineer",
+        action: `Created incident ${incident.id} for pipeline ${incident.pipeline_id}`,
+        module: "Alerts",
+        status: "Success",
+      });
+
+      setIncidents((prev) => [incident, ...prev]);
+      setForm({ pipelineId: "", type: "LEAK", note: "" });
+    } catch (err) {
+      console.error("Failed to create incident:", err);
+      alert("Failed to save incident. Check console.");
+    }
   }
 
   return (
@@ -199,6 +219,7 @@ export default function Alerts() {
           <span>{pipelines.length} assets loaded</span>
           <span>{stats.total} active alerts</span>
           <span>{stats.incidents} manual incidents</span>
+          <span className="dbBadge">✅ Supabase Connected</span>
         </div>
       </div>
 
@@ -213,7 +234,7 @@ export default function Alerts() {
         <section className="panel reportPanel">
           <div className="panelHead">
             <h2>Report Incident</h2>
-            <p>Create a quick field incident for a selected pipeline.</p>
+            <p>Create a quick field incident — saved directly to Supabase.</p>
           </div>
 
           <form onSubmit={createIncident} className="incidentForm">
@@ -274,11 +295,11 @@ export default function Alerts() {
               incidents.slice(0, 4).map((incident) => (
                 <div key={incident.id} className="manualCard">
                   <div>
-                    <strong>{incident.type.replace("_", " ")}</strong>
+                    <strong>{(incident.type || "").replace("_", " ")}</strong>
                     <p>
-                      Pipeline #{incident.pipelineId} • {incident.zone}
+                      Pipeline #{incident.pipeline_id || incident.pipelineId} • {incident.pressure_zone || incident.zone}
                     </p>
-                    <small>{incident.createdAt}</small>
+                    <small>{incident.created_at ? new Date(incident.created_at).toLocaleString() : incident.createdAt}</small>
                   </div>
 
                   <span
@@ -426,6 +447,12 @@ export default function Alerts() {
           font-size: 12px;
           font-weight: 900;
           color: #123047;
+        }
+
+        .dbBadge {
+          background: #dcfce7 !important;
+          border-color: #86efac !important;
+          color: #166534 !important;
         }
 
         .kpiGrid {

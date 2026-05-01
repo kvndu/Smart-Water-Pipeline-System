@@ -1,46 +1,15 @@
-import { useMemo, useState } from "react";
-
-const initialEngineers = [
-  {
-    id: "ENG-001",
-    name: "Kasun Perera",
-    email: "kasun@pipeguard.com",
-    phone: "0771234567",
-    image: "",
-    nic: "982345678V",
-    address: "Colombo 05",
-    area: "Colombo North",
-    department: "Pipeline Inspection",
-    designation: "Field Engineer",
-    experience: 4,
-    shift: "Morning",
-    emergencyContact: "0712223334",
-    joinDate: "2024-01-15",
-    status: "Active",
-    assignedPipelines: 24,
-  },
-  {
-    id: "ENG-002",
-    name: "Nimal Silva",
-    email: "nimal@pipeguard.com",
-    phone: "0779876543",
-    image: "",
-    nic: "950112233V",
-    address: "Panadura",
-    area: "Colombo South",
-    department: "Maintenance",
-    designation: "Maintenance Engineer",
-    experience: 6,
-    shift: "Evening",
-    emergencyContact: "0704445556",
-    joinDate: "2023-08-10",
-    status: "Active",
-    assignedPipelines: 18,
-  },
-];
+import { useEffect, useMemo, useState } from "react";
+import {
+  fetchEngineers,
+  insertEngineer,
+  updateEngineer,
+  deleteEngineer,
+  insertAuditLog,
+} from "../utils/databaseService";
 
 export default function EngineerManagement() {
-  const [engineers, setEngineers] = useState(initialEngineers);
+  const [engineers, setEngineers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState(null);
 
@@ -56,25 +25,43 @@ export default function EngineerManagement() {
     designation: "Field Engineer",
     experience: "",
     shift: "Morning",
-    emergencyContact: "",
-    joinDate: "",
+    emergency_contact: "",
+    join_date: "",
     status: "Active",
-    assignedPipelines: "",
+    assigned_pipelines: "",
   };
 
   const [form, setForm] = useState(emptyForm);
+
+  // Load engineers from Supabase on mount
+  useEffect(() => {
+    async function loadEngineers() {
+      try {
+        setLoading(true);
+        const data = await fetchEngineers();
+        setEngineers(data);
+      } catch (err) {
+        console.error("Failed to load engineers:", err);
+        setEngineers([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadEngineers();
+  }, []);
 
   const filteredEngineers = useMemo(() => {
     const keyword = search.toLowerCase();
 
     return engineers.filter(
       (engineer) =>
-        engineer.id.toLowerCase().includes(keyword) ||
-        engineer.name.toLowerCase().includes(keyword) ||
-        engineer.email.toLowerCase().includes(keyword) ||
-        engineer.area.toLowerCase().includes(keyword) ||
-        engineer.department.toLowerCase().includes(keyword) ||
-        engineer.status.toLowerCase().includes(keyword)
+        (engineer.id || "").toLowerCase().includes(keyword) ||
+        (engineer.name || "").toLowerCase().includes(keyword) ||
+        (engineer.email || "").toLowerCase().includes(keyword) ||
+        (engineer.area || "").toLowerCase().includes(keyword) ||
+        (engineer.department || "").toLowerCase().includes(keyword) ||
+        (engineer.status || "").toLowerCase().includes(keyword)
     );
   }, [engineers, search]);
 
@@ -116,64 +103,109 @@ export default function EngineerManagement() {
     setEditingId(null);
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     const engineerData = {
       ...form,
       experience: Number(form.experience || 0),
-      assignedPipelines: Number(form.assignedPipelines || 0),
+      assigned_pipelines: Number(form.assigned_pipelines || 0),
     };
 
-    if (editingId) {
-      setEngineers((prev) =>
-        prev.map((engineer) =>
-          engineer.id === editingId
-            ? { ...engineer, ...engineerData }
-            : engineer
-        )
-      );
+    try {
+      if (editingId) {
+        // UPDATE in Supabase
+        await updateEngineer(editingId, engineerData);
 
+        setEngineers((prev) =>
+          prev.map((engineer) =>
+            engineer.id === editingId
+              ? { ...engineer, ...engineerData }
+              : engineer
+          )
+        );
+
+        await insertAuditLog({
+          id: `LOG-${Date.now()}`,
+          user_name: localStorage.getItem("waterflow_user") || "Admin",
+          role: "Administrator",
+          action: `Updated engineer ${editingId}`,
+          module: "Engineer Management",
+          status: "Success",
+        });
+
+        resetForm();
+        return;
+      }
+
+      // INSERT new engineer into Supabase
+      const newEngineer = {
+        id: `ENG-${String(engineers.length + 1).padStart(3, "0")}`,
+        ...engineerData,
+      };
+
+      await insertEngineer(newEngineer);
+
+      await insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: localStorage.getItem("waterflow_user") || "Admin",
+        role: "Administrator",
+        action: `Created engineer ${newEngineer.id} — ${newEngineer.name}`,
+        module: "Engineer Management",
+        status: "Success",
+      });
+
+      setEngineers((prev) => [newEngineer, ...prev]);
       resetForm();
-      return;
+    } catch (err) {
+      console.error("Failed to save engineer:", err);
+      alert("Failed to save engineer. Check console.");
     }
-
-    const newEngineer = {
-      id: `ENG-${String(engineers.length + 1).padStart(3, "0")}`,
-      ...engineerData,
-    };
-
-    setEngineers((prev) => [...prev, newEngineer]);
-    resetForm();
   };
 
   const handleEdit = (engineer) => {
     setEditingId(engineer.id);
 
     setForm({
-      name: engineer.name,
-      email: engineer.email,
-      phone: engineer.phone,
+      name: engineer.name || "",
+      email: engineer.email || "",
+      phone: engineer.phone || "",
       image: engineer.image || "",
-      nic: engineer.nic,
-      address: engineer.address,
-      area: engineer.area,
-      department: engineer.department,
-      designation: engineer.designation,
-      experience: engineer.experience,
-      shift: engineer.shift,
-      emergencyContact: engineer.emergencyContact,
-      joinDate: engineer.joinDate,
-      status: engineer.status,
-      assignedPipelines: engineer.assignedPipelines,
+      nic: engineer.nic || "",
+      address: engineer.address || "",
+      area: engineer.area || "",
+      department: engineer.department || "Pipeline Inspection",
+      designation: engineer.designation || "Field Engineer",
+      experience: engineer.experience || "",
+      shift: engineer.shift || "Morning",
+      emergency_contact: engineer.emergency_contact || "",
+      join_date: engineer.join_date || "",
+      status: engineer.status || "Active",
+      assigned_pipelines: engineer.assigned_pipelines || "",
     });
   };
 
-  const handleDelete = (id) => {
+  const handleDelete = async (id) => {
     const ok = window.confirm("Are you sure you want to remove this engineer?");
     if (!ok) return;
 
-    setEngineers((prev) => prev.filter((engineer) => engineer.id !== id));
+    try {
+      await deleteEngineer(id);
+
+      await insertAuditLog({
+        id: `LOG-${Date.now()}`,
+        user_name: localStorage.getItem("waterflow_user") || "Admin",
+        role: "Administrator",
+        action: `Deleted engineer ${id}`,
+        module: "Engineer Management",
+        status: "Success",
+      });
+
+      setEngineers((prev) => prev.filter((engineer) => engineer.id !== id));
+    } catch (err) {
+      console.error("Failed to delete engineer:", err);
+      alert("Failed to delete engineer. Check console.");
+    }
   };
 
   const removeSelectedImage = () => {
@@ -377,11 +409,11 @@ export default function EngineerManagement() {
 
               <Input
                 label="Assigned Pipelines"
-                name="assignedPipelines"
+                name="assigned_pipelines"
                 type="number"
                 placeholder="Pipeline count"
                 min="0"
-                value={form.assignedPipelines}
+                value={form.assigned_pipelines}
                 onChange={handleChange}
                 required
               />
@@ -390,18 +422,18 @@ export default function EngineerManagement() {
             <div style={styles.twoCol}>
               <Input
                 label="Emergency Contact"
-                name="emergencyContact"
+                name="emergency_contact"
                 placeholder="Emergency phone"
-                value={form.emergencyContact}
+                value={form.emergency_contact}
                 onChange={handleChange}
                 required
               />
 
               <Input
                 label="Join Date"
-                name="joinDate"
+                name="join_date"
                 type="date"
-                value={form.joinDate}
+                value={form.join_date}
                 onChange={handleChange}
                 required
               />
@@ -485,7 +517,7 @@ export default function EngineerManagement() {
                 <div>
                   <strong>{engineer.area}</strong>
                   <p style={styles.smallLight}>
-                    {engineer.assignedPipelines} pipelines
+                    {engineer.assigned_pipelines} pipelines
                   </p>
                 </div>
 
