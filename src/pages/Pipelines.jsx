@@ -257,8 +257,7 @@ export default function Pipelines() {
         [
           p.pipeline_id,
           p.area_name,
-          p.ds_division,
-          p.material_type,
+          p.MATERIAL || p.material || p.material_type,
           p.risk_level,
         ]
           .join(" ")
@@ -801,7 +800,7 @@ export default function Pipelines() {
                     <td className="pipeline-id">{pipeline.pipeline_id}</td>
                     <td>{pipeline.area_name}</td>
                     <td>{pipeline.ds_division}</td>
-                    <td>{pipeline.material_type}</td>
+                    <td>{pipeline.MATERIAL || pipeline.material || "Unknown"}</td>
                     <td>
                       <span className={getRiskBadgeClass(pipeline.risk_level)}>
                         {pipeline.risk_level}

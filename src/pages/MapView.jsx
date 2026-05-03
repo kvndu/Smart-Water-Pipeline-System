@@ -105,10 +105,11 @@ function makePipe(feature) {
   return {
     id: p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid || "N/A",
     objectId: p.OBJECTID || p.objectid || "N/A",
-    status: p.STATUS || p.status || "N/A",
+    pipelineId: p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid || "N/A",
     pressureZone: p.PRESSURE_ZONE || p.pressure_zone || "N/A",
     material: p.MATERIAL || p.material || "N/A",
-    size: p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "N/A",
+    pipeSize: p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "N/A",
+    status: p.STATUS || p.status || "N/A",
     category: p.CATEGORY || p.category || "N/A",
     condition:
       p.CONDITION_SCORE ||

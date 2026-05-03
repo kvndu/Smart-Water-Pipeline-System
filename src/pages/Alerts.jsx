@@ -67,10 +67,10 @@ function buildAlerts(pipelines) {
       return {
         id: `${p.OBJECTID || p.WATMAINID}-${risk}`,
         risk,
-        watmainid: p.WATMAINID || p.OBJECTID || "N/A",
-        material: p.MATERIAL || "Unknown",
-        pipeSize: p.PIPE_SIZE || p.MAP_LABEL || "N/A",
-        zone: p.PRESSURE_ZONE || "Unknown zone",
+        pipeline_id: p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid,
+        material: p.MATERIAL || p.material || "Unknown",
+        size: p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "Unknown size",
+        zone: p.PRESSURE_ZONE || p.pressure_zone || "Unknown zone",
         category: p.CATEGORY || "Water Main",
         condition,
         criticality,
@@ -105,18 +105,33 @@ export default function Alerts() {
       setLoading(true);
 
       try {
-        const [pipelineResult, dbIncidents] = await Promise.all([
-          supabase.from("pipelines").select("*").limit(1000),
-          fetchIncidents(),
-        ]);
+        let allPipelines = [];
+        let from = 0;
+        let count = 1000;
+        let hasMore = true;
 
-        if (pipelineResult.error) {
-          console.error("Alerts fetch error:", pipelineResult.error);
-          setPipelines([]);
-        } else {
-          setPipelines(pipelineResult.data || []);
+        while (hasMore) {
+          const { data, error } = await supabase
+            .from("pipelines")
+            .select("*")
+            .range(from, from + count - 1);
+
+          if (error) {
+            console.error("Alerts pipeline fetch error:", error);
+            break;
+          }
+          if (data) {
+            allPipelines = [...allPipelines, ...data];
+          }
+          if (!data || data.length < count) {
+            hasMore = false;
+          }
+          from += count;
         }
 
+        const dbIncidents = await fetchIncidents();
+        
+        setPipelines(allPipelines);
         setIncidents(dbIncidents);
       } catch (err) {
         console.error("Failed to load alerts data:", err);
@@ -138,7 +153,7 @@ export default function Alerts() {
 
       const matchesSearch =
         !keyword ||
-        String(a.watmainid).toLowerCase().includes(keyword) ||
+        String(a.pipeline_id).toLowerCase().includes(keyword) ||
         String(a.material).toLowerCase().includes(keyword) ||
         String(a.zone).toLowerCase().includes(keyword);
 
@@ -164,7 +179,7 @@ export default function Alerts() {
     e.preventDefault();
 
     const selected = pipelines.find(
-      (p) => String(p.WATMAINID) === String(form.pipelineId)
+      (p) => String(p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid) === String(form.pipelineId)
     );
 
     if (!selected) {
@@ -174,12 +189,12 @@ export default function Alerts() {
 
     const incident = {
       id: `INC-${Date.now()}`,
-      pipeline_id: String(selected.WATMAINID || selected.OBJECTID),
+      pipeline_id: String(selected.WATMAINID || selected.watmainid || selected.OBJECTID || selected.objectid),
       type: form.type,
       risk: getRisk(selected),
-      material: selected.MATERIAL || "Unknown",
-      pipe_size: selected.PIPE_SIZE || selected.MAP_LABEL || "N/A",
-      pressure_zone: selected.PRESSURE_ZONE || "Unknown zone",
+      material: selected.MATERIAL || selected.material || "Unknown",
+      pipe_size: selected.PIPE_SIZE || selected.pipe_size || selected.MAP_LABEL || selected.map_label || "N/A",
+      pressure_zone: selected.PRESSURE_ZONE || selected.pressure_zone || "Unknown zone",
       note: form.note,
       status: "OPEN",
       created_by: localStorage.getItem("waterflow_user") || "Engineer",
@@ -248,9 +263,9 @@ export default function Alerts() {
               >
                 <option value="">Select pipeline</option>
                 {pipelines.map((p) => (
-                  <option key={p.OBJECTID || p.WATMAINID} value={p.WATMAINID}>
-                    {p.WATMAINID || p.OBJECTID} • {p.MATERIAL || "Unknown"} •{" "}
-                    {p.PIPE_SIZE || p.MAP_LABEL || "N/A"}
+                  <option key={p.OBJECTID || p.WATMAINID || p.objectid || p.watmainid} value={p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid}>
+                    {p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid} • {p.MATERIAL || p.material || "Unknown"} •{" "}
+                    {p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "N/A"} • {p.PRESSURE_ZONE || p.pressure_zone || "Unknown zone"}
                   </option>
                 ))}
               </select>

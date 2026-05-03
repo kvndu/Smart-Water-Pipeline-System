@@ -383,11 +383,11 @@ export default function Maintenance() {
                 const id = getId(p);
 
                 return (
-                  <tr key={`${p.OBJECTID || id}-${index}`}>
-                    <td className="strong">{p.WATMAINID || "N/A"}</td>
-                    <td>{p.MATERIAL || "N/A"}</td>
-                    <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
-                    <td>{p.PRESSURE_ZONE || "N/A"}</td>
+                  <tr key={`${p.OBJECTID || p.objectid || id}-${index}`}>
+                    <td className="strong">{p.WATMAINID || p.watmainid || "N/A"}</td>
+                    <td>{p.MATERIAL || p.material || "N/A"}</td>
+                    <td>{p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "N/A"}</td>
+                    <td>{p.PRESSURE_ZONE || p.pressure_zone || "N/A"}</td>
                     <td>{getCondition(p) ?? "N/A"}</td>
                     <td>{getCriticality(p) ?? "N/A"}</td>
                     <td>

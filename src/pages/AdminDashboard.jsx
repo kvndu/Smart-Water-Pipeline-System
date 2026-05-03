@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../utils/supabaseClient";
+import { logout } from "../utils/authService";
 
 function toNumber(value) {
   const n = Number(value);
@@ -8,11 +9,11 @@ function toNumber(value) {
 }
 
 function getConditionScore(p) {
-  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE);
+  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE ?? p.condition_score);
 }
 
 function getCriticality(p) {
-  return toNumber(p.CRITICALITY);
+  return toNumber(p.CRITICALITY ?? p.criticality);
 }
 
 function getRiskLevel(p) {
@@ -43,7 +44,7 @@ function getPriority(p) {
 }
 
 function getPipelineId(p) {
-  return p.WATMAINID || p.OBJECTID || "N/A";
+  return p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid || "N/A";
 }
 
 function getRiskColor(risk) {
@@ -64,18 +65,31 @@ export default function AdminDashboard() {
     async function loadAdminData() {
       setLoading(true);
 
-      const { data, error } = await supabase
-        .from("pipelines")
-        .select("*")
-        .limit(2000);
+      let allData = [];
+      let from = 0;
+      const batchSize = 1000;
+      let keepFetching = true;
 
-      if (error) {
-        console.error("Admin dashboard fetch error:", error);
-        setPipelines([]);
-      } else {
-        setPipelines(data || []);
+      while (keepFetching) {
+        const { data, error } = await supabase
+          .from("pipelines")
+          .select("*")
+          .range(from, from + batchSize - 1);
+
+        if (error) {
+          console.error("Admin dashboard fetch error:", error);
+          break;
+        }
+
+        if (data.length === 0) {
+          keepFetching = false;
+        } else {
+          allData = [...allData, ...data];
+          from += batchSize;
+        }
       }
 
+      setPipelines(allData);
       setLoading(false);
     }
 
@@ -83,8 +97,7 @@ export default function AdminDashboard() {
   }, []);
 
   function handleLogout() {
-    localStorage.removeItem("waterflow_auth");
-    localStorage.removeItem("waterflow_user");
+    logout();
     navigate("/login", { replace: true });
   }
 
@@ -142,7 +155,7 @@ export default function AdminDashboard() {
     const zones = {};
 
     enriched.forEach((p) => {
-      const zone = p.PRESSURE_ZONE || "Unknown Zone";
+      const zone = p.PRESSURE_ZONE || p.pressure_zone || "Unknown Zone";
 
       if (!zones[zone]) {
         zones[zone] = {
@@ -188,7 +201,7 @@ export default function AdminDashboard() {
       </div>
 
       {loading ? (
-        <div className="adminPanel">Loading admin dashboard...</div>
+        <div className="adminPanel">Loading admin dashboard data from Supabase...</div>
       ) : (
         <>
           <div className="adminKpiGrid">
@@ -303,12 +316,12 @@ export default function AdminDashboard() {
 
                 <tbody>
                   {highRiskAssets.map((p) => (
-                    <tr key={`${p.pipelineId}-${p.OBJECTID}`}>
+                    <tr key={`${p.pipelineId}-${p.OBJECTID || p.objectid || Math.random()}`}>
                       <td className="strong">{p.pipelineId}</td>
-                      <td>{p.STATUS || "N/A"}</td>
-                      <td>{p.PRESSURE_ZONE || "N/A"}</td>
-                      <td>{p.MATERIAL || "N/A"}</td>
-                      <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
+                      <td>{p.STATUS || p.status || "N/A"}</td>
+                      <td>{p.PRESSURE_ZONE || p.pressure_zone || "N/A"}</td>
+                      <td>{p.MATERIAL || p.material || "N/A"}</td>
+                      <td>{p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "N/A"}</td>
                       <td>{p.condition ?? "N/A"}</td>
                       <td>{p.criticality ?? "N/A"}</td>
                       <td>

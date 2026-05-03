@@ -57,6 +57,30 @@ button {
   cursor: pointer;
 }
 
+/* BACK BUTTON */
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #ffffff !important;
+  color: #5f7688 !important;
+  border: 1px solid #d7e6ef !important;
+  border-radius: 12px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(20, 65, 90, 0.05);
+  margin-bottom: 16px;
+  transition: 0.2s ease;
+}
+
+.backBtn:hover {
+  color: #123047 !important;
+  border-color: #8cc9df !important;
+  transform: translateY(-1px);
+}
+
 /* APP LAYOUT */
 .appShell {
   display: block !important;

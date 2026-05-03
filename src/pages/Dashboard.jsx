@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../utils/supabaseClient";
+import { logout } from "../utils/authService";
 
 function toNumber(value) {
   const n = Number(value);
@@ -8,11 +9,11 @@ function toNumber(value) {
 }
 
 function getConditionScore(p) {
-  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE);
+  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE ?? p.condition_score);
 }
 
 function getCriticality(p) {
-  return toNumber(p.CRITICALITY);
+  return toNumber(p.CRITICALITY ?? p.criticality);
 }
 
 function getRiskLevel(p) {
@@ -57,7 +58,7 @@ function getAction(p) {
 }
 
 function getInstallYear(p) {
-  const raw = p.INSTALLATION_DATE;
+  const raw = p.INSTALLATION_DATE || p.installation_date;
   if (!raw) return null;
 
   const match = String(raw).match(/\d{4}/);
@@ -70,45 +71,71 @@ export default function Dashboard() {
   const [pipelines, setPipelines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
+  const [weather, setWeather] = useState({ temp: "--", feelsLike: "--", humidity: "--", wind: "--", pressure: "--", visibility: "--", desc: "Loading...", icon: "⛅" });
 
   function handleLogout() {
-    localStorage.removeItem("waterflow_auth");
+    logout();
     navigate("/login", { replace: true });
   }
-useEffect(() => {
-  async function loadAdminData() {
-    setLoading(true);
 
-    let allData = [];
-    let from = 0;
-    const batchSize = 1000;
-    let keepFetching = true;
+  useEffect(() => {
+    async function fetchPipelines() {
+      setLoading(true);
+      let allPipelines = [];
+      let from = 0;
+      let count = 1000;
+      let hasMore = true;
 
-    while (keepFetching) {
-      const { data, error } = await supabase
-        .from("pipelines")
-        .select("*")
-        .range(from, from + batchSize - 1);
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from("pipelines")
+          .select("*")
+          .range(from, from + count - 1);
 
-      if (error) {
-        console.error("Fetch error:", error);
-        break;
+        if (error) break;
+        if (data) {
+          allPipelines = [...allPipelines, ...data];
+        }
+        if (!data || data.length < count) {
+          hasMore = false;
+        }
+        from += count;
       }
+      setPipelines(allPipelines);
+      setLoading(false);
+    }
 
-      if (data.length === 0) {
-        keepFetching = false;
-      } else {
-        allData = [...allData, ...data];
-        from += batchSize;
+    async function fetchWeather() {
+      try {
+        const res = await fetch("https://api.open-meteo.com/v1/forecast?latitude=43.4668&longitude=-80.5164&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,surface_pressure,visibility&timezone=auto");
+        const data = await res.json();
+        const current = data.current;
+        const code = current.weather_code;
+        const temp = Math.round(current.temperature_2m);
+        const feelsLike = Math.round(current.apparent_temperature);
+        const humidity = current.relative_humidity_2m;
+        const wind = current.wind_speed_10m;
+        const pressure = current.surface_pressure;
+        const visibility = current.visibility ? (current.visibility / 1000).toFixed(1) : "14";
+        
+        let desc = "Clear";
+        let icon = "☀️";
+        if (code === 1 || code === 2) { desc = "Partly Cloudy"; icon = "⛅"; }
+        else if (code === 3) { desc = "Overcast"; icon = "☁️"; }
+        else if (code >= 45 && code <= 48) { desc = "Fog"; icon = "🌫️"; }
+        else if (code >= 51 && code <= 67) { desc = "Rain"; icon = "🌧️"; }
+        else if (code >= 71 && code <= 77) { desc = "Snow"; icon = "❄️"; }
+        else if (code >= 95) { desc = "Thunderstorm"; icon = "⛈️"; }
+
+        setWeather({ temp, feelsLike, humidity, wind, pressure, visibility, desc, icon });
+      } catch (err) {
+        console.error("Failed to fetch weather:", err);
       }
     }
 
-    setPipelines(allData);
-    setLoading(false);
-  }
-
-  loadAdminData();
-}, []);
+    fetchPipelines();
+    fetchWeather();
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
@@ -173,17 +200,16 @@ useEffect(() => {
 
   const recentOperationalAlerts = useMemo(() => {
     return topRiskPipelines.slice(0, 5).map((p) => ({
-      id: p.WATMAINID || p.OBJECTID,
+      id: p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid,
       title:
         p.risk === "HIGH"
           ? "High risk pipeline detected"
           : p.priority === "CRITICAL"
-          ? "Critical maintenance asset"
-          : "Preventive maintenance recommended",
+            ? "Critical maintenance asset"
+            : "Preventive maintenance recommended",
       risk: p.risk,
-      message: `${p.MATERIAL || "Unknown material"} • ${
-        p.PIPE_SIZE || p.MAP_LABEL || "Unknown size"
-      } • ${p.PRESSURE_ZONE || "Unknown zone"}`,
+      message: `${p.MATERIAL || p.material || "Unknown material"} • ${p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "Unknown size"
+        } • ${p.PRESSURE_ZONE || p.pressure_zone || "Unknown zone"}`,
       action: p.action,
     }));
   }, [topRiskPipelines]);
@@ -210,15 +236,71 @@ useEffect(() => {
           <h1>Smart Water Pipeline Dashboard</h1>
         </div>
 
-        <div className="heroBadges">
-          <span>{stats.total} records loaded</span>
-          <span>Supabase connected</span>
-          <span>
-            {now.toLocaleDateString()} {now.toLocaleTimeString()}
-          </span>
-          <button className="logoutBtn" onClick={handleLogout}>
-            Logout
-          </button>
+        <div className="heroBadges" style={{ display: "flex", gap: "16px", alignItems: "flex-end", flexDirection: "column" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            <span>{stats.total} records loaded</span>
+            <span>Supabase connected</span>
+            <button className="logoutBtn" onClick={handleLogout}>
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* COMPREHENSIVE WEATHER PANEL */}
+      <div style={{ display: "flex", gap: "24px", marginBottom: "22px", background: "linear-gradient(135deg, #0f172a, #1e293b)", color: "white", padding: "28px", borderRadius: "24px", boxShadow: "0 18px 45px rgba(15,23,42,0.15)", flexWrap: "wrap", border: "1px solid #334155" }}>
+        
+        {/* Column 1: Temp & Overview */}
+        <div style={{ flex: "1 1 250px" }}>
+          <h2 style={{ margin: 0, color: "#94a3b8", fontSize: "14px", textTransform: "uppercase", letterSpacing: "1px" }}>Weather in Kitchener, Ontario</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: "20px", marginTop: "20px" }}>
+            <span style={{ fontSize: "64px", lineHeight: 1 }}>{weather.icon}</span>
+            <div>
+              <div style={{ fontSize: "56px", fontWeight: "900", margin: 0, lineHeight: 1 }}>{weather.temp}°C</div>
+              <div style={{ fontSize: "18px", color: "#cbd5e1", fontWeight: "700", marginTop: "6px" }}>{weather.desc}</div>
+            </div>
+          </div>
+          <div style={{ marginTop: "24px", color: "#94a3b8", fontSize: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+            <div>Feels Like: <strong style={{ color: "white" }}>{weather.feelsLike}°C</strong></div>
+            <div>Wind: <strong style={{ color: "white" }}>{weather.wind} km/h</strong></div>
+          </div>
+        </div>
+
+        {/* Column 2: Specifics */}
+        <div style={{ flex: "1 1 250px", borderLeft: "1px solid #334155", paddingLeft: "24px", display: "flex", flexDirection: "column", justifyContent: "space-between", fontSize: "14px" }}>
+           <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px" }}>
+             <span style={{ color: "#94a3b8" }}>Location:</span>
+             <strong>Kitchener, ON</strong>
+           </div>
+           <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px", paddingTop: "10px" }}>
+             <span style={{ color: "#94a3b8" }}>Current Time:</span>
+             <strong>{now.toLocaleDateString()} {now.toLocaleTimeString()}</strong>
+           </div>
+           <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px", paddingTop: "10px" }}>
+             <span style={{ color: "#94a3b8" }}>Visibility:</span>
+             <strong>{weather.visibility} km</strong>
+           </div>
+           <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #334155", paddingBottom: "10px", paddingTop: "10px" }}>
+             <span style={{ color: "#94a3b8" }}>Pressure:</span>
+             <strong>{weather.pressure} mbar</strong>
+           </div>
+           <div style={{ display: "flex", justifyContent: "space-between", paddingTop: "10px" }}>
+             <span style={{ color: "#94a3b8" }}>Humidity:</span>
+             <strong>{weather.humidity}%</strong>
+           </div>
+        </div>
+
+        {/* Column 3: Map */}
+        <div style={{ flex: "1 1 250px", background: "#cbd5e1", borderRadius: "14px", overflow: "hidden", minHeight: "200px", position: "relative" }}>
+          <iframe 
+            width="100%" 
+            height="100%" 
+            frameBorder="0" 
+            style={{ border: 0, position: "absolute", top: 0, left: 0 }} 
+            src="https://www.openstreetmap.org/export/embed.html?bbox=-80.5764%2C43.4368%2C-80.4564%2C43.4968&amp;layer=mapnik&amp;marker=43.4668%2C-80.5164" 
+            title="Weather Map"
+            allowFullScreen>
+          </iframe>
         </div>
       </div>
 
@@ -391,11 +473,11 @@ useEffect(() => {
 
                   <tbody>
                     {topRiskPipelines.map((p) => (
-                      <tr key={p.OBJECTID}>
-                        <td className="strong">{p.WATMAINID || "N/A"}</td>
-                        <td>{p.MATERIAL || "N/A"}</td>
-                        <td>{p.PIPE_SIZE || p.MAP_LABEL || "N/A"}</td>
-                        <td>{p.PRESSURE_ZONE || "N/A"}</td>
+                      <tr key={p.OBJECTID || p.objectid || Math.random()}>
+                        <td className="strong">{p.WATMAINID || p.watmainid || "N/A"}</td>
+                        <td>{p.MATERIAL || p.material || "N/A"}</td>
+                        <td>{p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "N/A"}</td>
+                        <td>{p.PRESSURE_ZONE || p.pressure_zone || "N/A"}</td>
                         <td>{p.condition ?? "N/A"}</td>
                         <td>
                           <span className="pill" style={{ background: getRiskColor(p.risk) }}>
@@ -403,7 +485,7 @@ useEffect(() => {
                           </span>
                         </td>
                         <td>
-                          <Link className="viewBtn" to={`/pipelines/${p.WATMAINID || p.OBJECTID}`}>
+                          <Link className="viewBtn" to={`/pipelines/${p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid}`}>
                             View
                           </Link>
                         </td>
@@ -422,12 +504,12 @@ useEffect(() => {
 
               <div className="queueList">
                 {maintenanceQueue.map((p) => (
-                  <div key={p.OBJECTID} className="queueCard">
+                  <div key={p.OBJECTID || p.objectid || Math.random()} className="queueCard">
                     <div>
-                      <div className="queueTitle">Pipeline #{p.WATMAINID || p.OBJECTID}</div>
+                      <div className="queueTitle">Pipeline #{p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid}</div>
                       <div className="queueSub">
-                        {p.MATERIAL || "N/A"} • {p.PIPE_SIZE || p.MAP_LABEL || "N/A"} •{" "}
-                        {p.PRESSURE_ZONE || "N/A"}
+                        {p.MATERIAL || p.material || "N/A"} • {p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "N/A"} •{" "}
+                        {p.PRESSURE_ZONE || p.pressure_zone || "N/A"}
                       </div>
                       <div className="queueAction">{p.action}</div>
                     </div>
@@ -439,8 +521,8 @@ useEffect(() => {
                           p.priority === "CRITICAL"
                             ? "#ef4444"
                             : p.priority === "PLANNED"
-                            ? "#f59e0b"
-                            : "#0284c7",
+                              ? "#f59e0b"
+                              : "#0284c7",
                       }}
                     >
                       {p.priority}

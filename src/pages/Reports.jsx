@@ -1,946 +1,180 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useState } from "react";
 import { supabase } from "../utils/supabaseClient";
-
-const PAGE_SIZE = 1000;
-
-async function fetchAllPipelines() {
-  let allRows = [];
-  let from = 0;
-
-  while (true) {
-    const to = from + PAGE_SIZE - 1;
-
-    const { data, error } = await supabase
-      .from("pipelines")
-      .select("*")
-      .range(from, to);
-
-    if (error) throw error;
-
-    const rows = data || [];
-    allRows = [...allRows, ...rows];
-
-    if (rows.length < PAGE_SIZE) break;
-
-    from += PAGE_SIZE;
-  }
-
-  return allRows;
-}
-
-function toNumber(value, fallback = null) {
-  if (value === null || value === undefined || value === "") return fallback;
-  const n = Number(String(value).replace(/,/g, ""));
-  return Number.isNaN(n) ? fallback : n;
-}
-
-function getConditionScore(p) {
-  return toNumber(p["Condition Score"] ?? p.CONDITION_SCORE ?? p.condition_score, null);
-}
-
-function getCriticality(p) {
-  return toNumber(p.CRITICALITY ?? p.criticality, null);
-}
-
-function getLength(p) {
-  return toNumber(p.Shape__Length ?? p.shape__length, 0);
-}
-
-function getPipelineId(p) {
-  return p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid || "N/A";
-}
-
-function getRiskLevel(p) {
-  const condition = getConditionScore(p);
-  const criticality = getCriticality(p);
-
-  if (condition !== null) {
-    if (condition <= 4) return "HIGH";
-    if (condition <= 7) return "MEDIUM";
-    return "LOW";
-  }
-
-  if (criticality !== null) {
-    if (criticality >= 8) return "HIGH";
-    if (criticality >= 5) return "MEDIUM";
-  }
-
-  return "LOW";
-}
-
-function getRiskScore(risk) {
-  if (risk === "HIGH") return 0.85;
-  if (risk === "MEDIUM") return 0.55;
-  return 0.2;
-}
-
-function getPriority(p) {
-  const risk = getRiskLevel(p);
-  const criticality = getCriticality(p) ?? 0;
-
-  if (risk === "HIGH" || criticality >= 8) return "Critical";
-  if (risk === "MEDIUM" || criticality >= 5) return "Moderate";
-  return "Low";
-}
-
-function getAction(priority) {
-  if (priority === "Critical") return "Immediate field inspection required";
-  if (priority === "Moderate") return "Schedule preventive maintenance";
-  return "Routine monitoring";
-}
-
-function riskClass(risk) {
-  if (risk === "HIGH") return "danger";
-  if (risk === "MEDIUM") return "warn";
-  return "ok";
-}
-
-function priorityClass(priority) {
-  if (priority === "Critical") return "danger";
-  if (priority === "Moderate") return "warn";
-  return "ok";
-}
-
-function toCSV(rows) {
-  if (!rows.length) return "";
-
-  const headers = Object.keys(rows[0]);
-
-  return [
-    headers.join(","),
-    ...rows.map((row) =>
-      headers
-        .map((header) => `"${String(row[header] ?? "").replaceAll('"', '""')}"`)
-        .join(",")
-    ),
-  ].join("\n");
-}
-
-function downloadCSV(filename, rows) {
-  const blob = new Blob([toCSV(rows)], { type: "text/csv;charset=utf-8;" });
-  const link = document.createElement("a");
-
-  link.href = URL.createObjectURL(blob);
-  link.download = filename;
-  link.click();
-
-  URL.revokeObjectURL(link.href);
-}
+import { fetchIncidents, fetchAuditLogs } from "../utils/databaseService";
 
 export default function Reports() {
-  const [pipelines, setPipelines] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [downloading, setDownloading] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
+  const [loadingType, setLoadingType] = useState(null);
 
-  useEffect(() => {
-    async function loadReportsData() {
-      try {
-        setLoading(true);
-        setErrorMsg("");
+  async function downloadPipelineData() {
+    try {
+      setLoadingType("pipelines");
+      let allRows = [];
+      let from = 0;
+      const count = 1000;
+      let hasMore = true;
 
-        const rows = await fetchAllPipelines();
-        setPipelines(rows);
-      } catch (error) {
-        console.error("Reports fetch error:", error);
-        setPipelines([]);
-        setErrorMsg("Failed to load reports data.");
-      } finally {
-        setLoading(false);
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from("pipelines")
+          .select("*")
+          .range(from, from + count - 1);
+
+        if (error) throw error;
+        if (data) allRows = [...allRows, ...data];
+        if (!data || data.length < count) hasMore = false;
+        from += count;
       }
+
+      if (allRows.length === 0) {
+        alert("No pipeline data found.");
+        return;
+      }
+
+      generateCSV(allRows, "Pipeline_Asset_Inventory_Report.csv");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to generate pipeline report.");
+    } finally {
+      setLoadingType(null);
     }
-
-    loadReportsData();
-  }, []);
-
-  const generatedAt = useMemo(() => new Date(), []);
-
-  const enriched = useMemo(() => {
-    return pipelines.map((p) => {
-      const riskLevel = getRiskLevel(p);
-      const priority = getPriority(p);
-
-      return {
-        ...p,
-        pipelineId: getPipelineId(p),
-        conditionScore: getConditionScore(p),
-        criticality: getCriticality(p),
-        pipeLength: getLength(p),
-        riskLevel,
-        riskScore: getRiskScore(riskLevel),
-        priority,
-        action: getAction(priority),
-      };
-    });
-  }, [pipelines]);
-
-  const stats = useMemo(() => {
-    const total = enriched.length;
-    const high = enriched.filter((p) => p.riskLevel === "HIGH").length;
-    const medium = enriched.filter((p) => p.riskLevel === "MEDIUM").length;
-    const low = enriched.filter((p) => p.riskLevel === "LOW").length;
-    const critical = enriched.filter((p) => p.priority === "Critical").length;
-    const moderate = enriched.filter((p) => p.priority === "Moderate").length;
-
-    const conditionValues = enriched
-      .map((p) => p.conditionScore)
-      .filter((v) => v !== null);
-
-    const avgCondition =
-      conditionValues.length > 0
-        ? (
-            conditionValues.reduce((sum, value) => sum + value, 0) /
-            conditionValues.length
-          ).toFixed(2)
-        : "N/A";
-
-    const totalLength = enriched.reduce(
-      (sum, p) => sum + Number(p.pipeLength || 0),
-      0
-    );
-
-    return {
-      total,
-      high,
-      medium,
-      low,
-      critical,
-      moderate,
-      avgCondition,
-      totalLength,
-      systemHealth: total ? Math.round((low / total) * 100) : 0,
-    };
-  }, [enriched]);
-
-  const priorityAssets = useMemo(() => {
-    const riskOrder = { HIGH: 3, MEDIUM: 2, LOW: 1 };
-
-    return [...enriched]
-      .sort((a, b) => {
-        const riskDiff = riskOrder[b.riskLevel] - riskOrder[a.riskLevel];
-        if (riskDiff !== 0) return riskDiff;
-
-        return Number(b.criticality || 0) - Number(a.criticality || 0);
-      })
-      .slice(0, 10);
-  }, [enriched]);
-
-  const zoneSummary = useMemo(() => {
-    const zones = {};
-
-    enriched.forEach((p) => {
-      const zone = p.PRESSURE_ZONE || p.pressure_zone || "Unknown Zone";
-
-      if (!zones[zone]) {
-        zones[zone] = {
-          name: zone,
-          total: 0,
-          high: 0,
-          medium: 0,
-          low: 0,
-          critical: 0,
-        };
-      }
-
-      zones[zone].total += 1;
-      if (p.riskLevel === "HIGH") zones[zone].high += 1;
-      if (p.riskLevel === "MEDIUM") zones[zone].medium += 1;
-      if (p.riskLevel === "LOW") zones[zone].low += 1;
-      if (p.priority === "Critical") zones[zone].critical += 1;
-    });
-
-    return Object.values(zones)
-      .sort(
-        (a, b) =>
-          b.critical + b.high + b.medium - (a.critical + a.high + a.medium)
-      )
-      .slice(0, 6);
-  }, [enriched]);
-
-  const materialSummary = useMemo(() => {
-    const materials = {};
-
-    enriched.forEach((p) => {
-      const material = p.MATERIAL || p.material || "Unknown";
-
-      if (!materials[material]) {
-        materials[material] = {
-          name: material,
-          total: 0,
-          high: 0,
-          medium: 0,
-        };
-      }
-
-      materials[material].total += 1;
-      if (p.riskLevel === "HIGH") materials[material].high += 1;
-      if (p.riskLevel === "MEDIUM") materials[material].medium += 1;
-    });
-
-    return Object.values(materials)
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 8);
-  }, [enriched]);
-
-  const exportRows = useMemo(() => {
-    return enriched.map((p) => ({
-      OBJECTID: p.OBJECTID ?? p.objectid ?? "",
-      WATMAINID: p.WATMAINID ?? p.watmainid ?? "",
-      STATUS: p.STATUS ?? p.status ?? "",
-      PRESSURE_ZONE: p.PRESSURE_ZONE ?? p.pressure_zone ?? "",
-      MAP_LABEL: p.MAP_LABEL ?? p.map_label ?? "",
-      CATEGORY: p.CATEGORY ?? p.category ?? "",
-      PIPE_SIZE: p.PIPE_SIZE ?? p.pipe_size ?? "",
-      MATERIAL: p.MATERIAL ?? p.material ?? "",
-      LINED: p.LINED ?? p.lined ?? "",
-      CONDITION_SCORE: p.conditionScore ?? "",
-      CRITICALITY: p.criticality ?? "",
-      Shape__Length: p.pipeLength ?? "",
-      risk_score: p.riskScore.toFixed(3),
-      risk_level: p.riskLevel,
-      priority: p.priority,
-      recommended_action: p.action,
-    }));
-  }, [enriched]);
-
-  function handleDownloadCSV() {
-    setDownloading("csv");
-
-    setTimeout(() => {
-      downloadCSV("Waterloo_Kitchener_Water_Mains_Report.csv", exportRows);
-      setDownloading("");
-    }, 300);
   }
 
-  function handlePrintReport() {
-    setDownloading("print");
+  async function downloadIncidentLogs() {
+    try {
+      setLoadingType("incidents");
+      const data = await fetchIncidents();
+      if (!data || data.length === 0) {
+        alert("No incident data found.");
+        return;
+      }
+      generateCSV(data, "System_Incident_Logs.csv");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to generate incident report.");
+    } finally {
+      setLoadingType(null);
+    }
+  }
 
-    setTimeout(() => {
-      window.print();
-      setDownloading("");
-    }, 300);
+  async function downloadAuditLogs() {
+    try {
+      setLoadingType("audit");
+      const data = await fetchAuditLogs();
+      if (!data || data.length === 0) {
+        alert("No audit logs found.");
+        return;
+      }
+      generateCSV(data, "System_Audit_Logs.csv");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to generate audit report.");
+    } finally {
+      setLoadingType(null);
+    }
+  }
+
+  function generateCSV(dataArray, filename) {
+    if (!dataArray || dataArray.length === 0) return;
+
+    // Get headers
+    const headers = Object.keys(dataArray[0]);
+    
+    // Create CSV content
+    const csvRows = [];
+    csvRows.push(headers.join(",")); // Header row
+
+    for (const row of dataArray) {
+      const values = headers.map(header => {
+        let val = row[header];
+        if (val === null || val === undefined) val = "";
+        const valString = String(val);
+        // Escape quotes and commas
+        if (valString.includes(",") || valString.includes("\"") || valString.includes("\n")) {
+          return `"${valString.replace(/"/g, '""')}"`;
+        }
+        return valString;
+      });
+      csvRows.push(values.join(","));
+    }
+
+    const csvString = csvRows.join("\n");
+    const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   return (
-    <div className="reportsPage">
-      <div className="reportHero">
+    <div className="reportsPage" style={{ padding: "28px", animation: "fadeIn 0.3s ease" }}>
+      <div className="hero" style={{ background: "linear-gradient(135deg, #ffffff, #eef8fc, #dff2fa)", padding: "28px", borderRadius: "22px", border: "1px solid #c8e3ef", marginBottom: "32px", boxShadow: "0 12px 30px rgba(20, 65, 90, 0.08)" }}>
         <div>
-          <div className="heroEyebrow">Reporting</div>
-          <h1>Water Mains Report</h1>
-        </div>
-
-        <div className="reportActions noPrint">
-          <button onClick={handleDownloadCSV} disabled={!!downloading}>
-            📊 {downloading === "csv" ? "Generating..." : "Export CSV"}
-          </button>
-          <button className="primary" onClick={handlePrintReport} disabled={!!downloading}>
-            🖨️ {downloading === "print" ? "Preparing..." : "Print Report"}
-          </button>
+          <div className="eyebrow" style={{ display: "inline-block", background: "#e2f4fb", color: "#0b6fa4", border: "1px solid #b9ddeb", fontWeight: "900", fontSize: "12px", letterSpacing: "1px", padding: "7px 12px", borderRadius: "999px", textTransform: "uppercase", marginBottom: "10px" }}>
+            Report Generation Center
+          </div>
+          <h1 style={{ margin: 0, fontSize: "30px", color: "#123047" }}>System Reports</h1>
+          <p style={{ marginTop: "10px", color: "#5f7688", fontWeight: "600" }}>Export comprehensive system data to CSV for external analysis and archiving.</p>
         </div>
       </div>
 
-      {loading ? (
-        <div className="panel">Loading report data...</div>
-      ) : errorMsg ? (
-        <div className="panel errorText">{errorMsg}</div>
-      ) : (
-        <>
-          <section className="panel">
-            <div className="sectionHead">
-              <h2>Report Details</h2>
-              <p>Generated report context and dataset source.</p>
-            </div>
-
-            <div className="metaGrid">
-              <InfoCard label="Dataset" value="Waterloo/Kitchener Water Mains" />
-              <InfoCard label="Generated Date" value={generatedAt.toLocaleDateString()} />
-              <InfoCard label="Generated Time" value={generatedAt.toLocaleTimeString()} />
-              <InfoCard label="Data Source" value="Supabase pipelines table" />
-            </div>
-          </section>
-
-          <section className="kpiGrid">
-            <Kpi title="Total Assets" value={stats.total.toLocaleString()} />
-            <Kpi title="High Risk" value={stats.high.toLocaleString()} tone="danger" />
-            <Kpi title="Medium Risk" value={stats.medium.toLocaleString()} tone="warn" />
-            <Kpi title="Critical Tasks" value={stats.critical.toLocaleString()} tone="danger" />
-            <Kpi title="Avg. Condition" value={stats.avgCondition} tone="blue" />
-            <Kpi title="System Health" value={`${stats.systemHealth}%`} tone="ok" />
-          </section>
-
-          <section className="panel">
-            <div className="sectionHead">
-              <h2>Executive Summary</h2>
-              <p>Readable summary for project report or presentation.</p>
-            </div>
-
-            <div className="summaryGrid">
-              <SummaryCard
-                title="Asset Risk Status"
-                text={`Out of ${stats.total.toLocaleString()} visible water main assets, ${stats.high.toLocaleString()} are classified as High risk, ${stats.medium.toLocaleString()} are Medium risk, and ${stats.low.toLocaleString()} are Low risk.`}
-              />
-              <SummaryCard
-                title="Maintenance Priority"
-                text={`${stats.critical.toLocaleString()} assets require critical attention. ${stats.moderate.toLocaleString()} assets should be scheduled for preventive maintenance.`}
-              />
-              <SummaryCard
-                title="Condition Insight"
-                text={`Average condition score is ${stats.avgCondition}. Lower condition score means weaker asset condition and higher maintenance priority.`}
-              />
-              <SummaryCard
-                title="Network Coverage"
-                text={`The currently loaded records represent ${stats.totalLength.toLocaleString(undefined, {
-                  maximumFractionDigits: 1,
-                })} metres of visible Shape Length from the dataset.`}
-              />
-            </div>
-          </section>
-
-          <section className="reportGrid">
-            <div className="panel">
-              <div className="sectionHead">
-                <h2>Priority Action Plan</h2>
-                <p>What the maintenance team should focus on first.</p>
-              </div>
-
-              <div className="actionCards">
-                <ActionCard
-                  tone="danger"
-                  title="Immediate Inspection"
-                  value={stats.critical.toLocaleString()}
-                  text="Send field team to inspect high-risk or high-criticality assets."
-                />
-                <ActionCard
-                  tone="warn"
-                  title="Preventive Maintenance"
-                  value={stats.moderate.toLocaleString()}
-                  text="Add medium-risk assets to upcoming maintenance schedule."
-                />
-                <ActionCard
-                  tone="ok"
-                  title="Routine Monitoring"
-                  value={stats.low.toLocaleString()}
-                  text="Low-risk assets can continue under normal monitoring."
-                />
-              </div>
-            </div>
-
-            <div className="panel">
-              <div className="sectionHead">
-                <h2>Pressure Zone Summary</h2>
-                <p>Zones with highest operational attention.</p>
-              </div>
-
-              <div className="zoneList">
-                {zoneSummary.map((zone) => (
-                  <div key={zone.name} className="miniReportCard">
-                    <div>
-                      <h3>{zone.name}</h3>
-                      <p>{zone.total.toLocaleString()} assets</p>
-                    </div>
-                    <div className="miniStats">
-                      <span className="dangerText">{zone.high.toLocaleString()} High</span>
-                      <span className="warnText">{zone.medium.toLocaleString()} Medium</span>
-                      <span>{zone.critical.toLocaleString()} Critical</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="sectionHead">
-              <h2>Material Summary</h2>
-              <p>Most common materials and their risk exposure.</p>
-            </div>
-
-            <div className="materialGrid">
-              {materialSummary.map((material) => (
-                <div key={material.name} className="materialCard">
-                  <h3>{material.name}</h3>
-                  <strong>{material.total.toLocaleString()}</strong>
-                  <p>
-                    {material.high.toLocaleString()} high risk •{" "}
-                    {material.medium.toLocaleString()} medium risk
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="sectionHead">
-              <h2>Top Priority Assets</h2>
-              <p>Short list of assets that need the most attention.</p>
-            </div>
-
-            <div className="priorityList">
-              {priorityAssets.map((p, index) => (
-                <div key={`${p.pipelineId}-${p.OBJECTID || index}`} className="priorityCard">
-                  <div>
-                    <h3>
-                      <Link to={`/pipelines/${p.pipelineId}`}>Pipeline #{p.pipelineId}</Link>
-                    </h3>
-                    <p>
-                      {p.MATERIAL || "Unknown"} • {p.PIPE_SIZE || p.MAP_LABEL || "N/A"} •{" "}
-                      {p.PRESSURE_ZONE || "Unknown zone"}
-                    </p>
-                    <small>
-                      Condition: {p.conditionScore ?? "N/A"} • Criticality:{" "}
-                      {p.criticality ?? "N/A"}
-                    </small>
-                  </div>
-
-                  <div className="priorityRight">
-                    <span className={`badge ${riskClass(p.riskLevel)}`}>
-                      {p.riskLevel}
-                    </span>
-                    <span className={`badge ${priorityClass(p.priority)}`}>
-                      {p.priority}
-                    </span>
-                    <b>{p.action}</b>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </>
-      )}
-
-      <style>{`
-        .reportsPage {
-          width: 100%;
-          padding: 28px;
-          animation: fadeIn 0.35s ease;
-        }
-
-        .reportHero {
-          display: flex;
-          justify-content: space-between;
-          gap: 20px;
-          align-items: flex-start;
-          padding: 28px;
-          border-radius: 22px;
-          margin-bottom: 22px;
-          background: linear-gradient(135deg, #ffffff, #eef8fc, #dff2fa);
-          border: 1px solid #c8e3ef;
-          box-shadow: 0 10px 26px rgba(20, 65, 90, 0.08);
-        }
-
-        .heroEyebrow {
-          display: inline-block;
-          background: #e2f4fb;
-          color: #0b6fa4;
-          border: 1px solid #b9ddeb;
-          font-weight: 900;
-          font-size: 12px;
-          letter-spacing: 1px;
-          padding: 7px 12px;
-          border-radius: 999px;
-          text-transform: uppercase;
-          margin-bottom: 10px;
-        }
-
-        .reportHero h1 {
-          margin: 0;
-          color: #123047;
-          font-size: 30px;
-        }
-
-        .reportActions {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
-
-        .reportActions button {
-          height: 42px;
-          border-radius: 12px;
-          padding: 0 14px;
-          font-weight: 900;
-          cursor: pointer;
-          border: 1px solid #c8e3ef;
-          background: #eef8fc;
-          color: #0b6fa4;
-        }
-
-        .reportActions button.primary {
-          background: #0b6fa4;
-          color: white;
-          border-color: #0b6fa4;
-        }
-
-        .reportActions button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-
-        .panel,
-        .reportKpi {
-          background: white;
-          border: 1px solid #d7e6ef;
-          border-radius: 20px;
-          box-shadow: 0 10px 26px rgba(20, 65, 90, 0.08);
-        }
-
-        .panel {
-          padding: 20px;
-          margin-bottom: 22px;
-        }
-
-        .sectionHead h2 {
-          margin: 0;
-          color: #123047;
-          font-size: 22px;
-        }
-
-        .sectionHead p {
-          margin: 6px 0 16px;
-          color: #5f7688;
-          font-weight: 600;
-        }
-
-        .metaGrid,
-        .summaryGrid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 14px;
-        }
-
-        .infoCard,
-        .summaryCard,
-        .miniReportCard,
-        .materialCard,
-        .priorityCard,
-        .actionCard {
-          background: #f6fafc;
-          border: 1px solid #d7e6ef;
-          border-radius: 16px;
-          padding: 16px;
-        }
-
-        .infoCard span,
-        .summaryCard span {
-          display: block;
-          color: #5f7688;
-          font-size: 12px;
-          font-weight: 900;
-          margin-bottom: 6px;
-        }
-
-        .infoCard strong,
-        .summaryCard strong {
-          color: #123047;
-          font-size: 14px;
-          line-height: 1.5;
-        }
-
-        .kpiGrid {
-          display: grid;
-          grid-template-columns: repeat(6, 1fr);
-          gap: 16px;
-          margin-bottom: 22px;
-        }
-
-        .reportKpi {
-          padding: 18px;
-        }
-
-        .reportKpi.danger {
-          background: #fdeaea;
-        }
-
-        .reportKpi.warn {
-          background: #fff4dd;
-        }
-
-        .reportKpi.blue {
-          background: #e2f4fb;
-        }
-
-        .reportKpi.ok {
-          background: #e4f7ef;
-        }
-
-        .reportKpi span {
-          color: #5f7688;
-          font-size: 13px;
-          font-weight: 900;
-        }
-
-        .reportKpi strong {
-          display: block;
-          margin-top: 8px;
-          color: #123047;
-          font-size: 28px;
-          font-weight: 950;
-        }
-
-        .reportGrid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 22px;
-        }
-
-        .actionCards,
-        .zoneList,
-        .priorityList {
-          display: grid;
-          gap: 12px;
-        }
-
-        .actionCard.danger {
-          background: #fdeaea;
-        }
-
-        .actionCard.warn {
-          background: #fff4dd;
-        }
-
-        .actionCard.ok {
-          background: #e4f7ef;
-        }
-
-        .actionCard span {
-          color: #5f7688;
-          font-size: 13px;
-          font-weight: 900;
-        }
-
-        .actionCard strong {
-          display: block;
-          margin-top: 6px;
-          color: #123047;
-          font-size: 28px;
-          font-weight: 950;
-        }
-
-        .actionCard p {
-          margin: 8px 0 0;
-          color: #31546a;
-          font-weight: 700;
-          line-height: 1.5;
-        }
-
-        .miniReportCard,
-        .priorityCard {
-          display: flex;
-          justify-content: space-between;
-          gap: 16px;
-          align-items: center;
-        }
-
-        .miniReportCard h3,
-        .materialCard h3,
-        .priorityCard h3 {
-          margin: 0;
-          color: #123047;
-          font-size: 16px;
-        }
-
-        .miniReportCard p,
-        .materialCard p,
-        .priorityCard p {
-          margin: 5px 0 0;
-          color: #5f7688;
-          font-size: 13px;
-          font-weight: 700;
-        }
-
-        .miniStats {
-          display: flex;
-          gap: 8px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-          color: #31546a;
-          font-size: 12px;
-          font-weight: 900;
-        }
-
-        .dangerText {
-          color: #dc2626;
-        }
-
-        .warnText {
-          color: #d97706;
-        }
-
-        .materialGrid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 14px;
-        }
-
-        .materialCard strong {
-          display: block;
-          margin-top: 8px;
-          color: #0b6fa4;
-          font-size: 28px;
-          font-weight: 950;
-        }
-
-        .priorityCard a {
-          color: #0b6fa4;
-          text-decoration: none;
-        }
-
-        .priorityCard small {
-          display: block;
-          margin-top: 6px;
-          color: #31546a;
-          font-weight: 800;
-        }
-
-        .priorityRight {
-          display: grid;
-          justify-items: end;
-          gap: 7px;
-          text-align: right;
-        }
-
-        .priorityRight b {
-          color: #31546a;
-          font-size: 12px;
-        }
-
-        .badge {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 999px;
-          padding: 6px 10px;
-          font-size: 11px;
-          font-weight: 950;
-          border: 1px solid transparent;
-          width: fit-content;
-        }
-
-        .badge.danger {
-          background: #fdeaea;
-          color: #a83232;
-          border-color: #f4bbbb;
-        }
-
-        .badge.warn {
-          background: #fff4dd;
-          color: #8a5a08;
-          border-color: #f3d48a;
-        }
-
-        .badge.ok {
-          background: #e4f7ef;
-          color: #0f6848;
-          border-color: #b8ead6;
-        }
-
-        .errorText {
-          color: #dc2626;
-          font-weight: 900;
-        }
-
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(5px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-
-        @media print {
-          .noPrint {
-            display: none !important;
-          }
-
-          .reportsPage {
-            padding: 0 !important;
-          }
-
-          .panel,
-          .reportHero,
-          .reportKpi {
-            box-shadow: none !important;
-          }
-        }
-
-        @media (max-width: 1200px) {
-          .kpiGrid {
-            grid-template-columns: repeat(3, 1fr);
-          }
-
-          .reportGrid,
-          .metaGrid,
-          .summaryGrid,
-          .materialGrid {
-            grid-template-columns: 1fr;
-          }
-        }
-
-        @media (max-width: 700px) {
-          .reportsPage {
-            padding: 18px;
-          }
-
-          .reportHero {
-            display: grid;
-          }
-
-          .reportActions {
-            justify-content: flex-start;
-          }
-
-          .kpiGrid {
-            grid-template-columns: 1fr;
-          }
-
-          .miniReportCard,
-          .priorityCard {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-
-          .priorityRight {
-            justify-items: start;
-            text-align: left;
-          }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-function Kpi({ title, value, tone = "" }) {
-  return (
-    <div className={`reportKpi ${tone}`}>
-      <span>{title}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function InfoCard({ label, value }) {
-  return (
-    <div className="infoCard">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function SummaryCard({ title, text }) {
-  return (
-    <div className="summaryCard">
-      <span>{title}</span>
-      <strong>{text}</strong>
-    </div>
-  );
-}
-
-function ActionCard({ title, value, text, tone = "" }) {
-  return (
-    <div className={`actionCard ${tone}`}>
-      <span>{title}</span>
-      <strong>{value}</strong>
-      <p>{text}</p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "24px" }}>
+        
+        {/* Pipeline Report */}
+        <div className="panel" style={{ background: "white", padding: "28px", borderRadius: "18px", border: "1px solid #d7e6ef", boxShadow: "0 10px 26px rgba(20, 65, 90, 0.08)", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: "0 0 12px 0", color: "#123047", fontSize: "20px" }}>Pipeline Asset Inventory</h2>
+            <p style={{ color: "#5f7688", fontSize: "14px", lineHeight: "1.5", marginBottom: "20px" }}>
+              Download the complete dataset of all {">"}16,000 smart water pipeline assets including material, condition scores, criticality, and geographic coordinates.
+            </p>
+          </div>
+          <button 
+            onClick={downloadPipelineData}
+            disabled={loadingType !== null}
+            style={{ width: "100%", padding: "14px", borderRadius: "10px", border: "none", background: loadingType === "pipelines" ? "#94a3b8" : "#0ea5e9", color: "white", fontWeight: "bold", cursor: loadingType !== null ? "not-allowed" : "pointer", transition: "0.2s" }}
+          >
+            {loadingType === "pipelines" ? "Generating CSV..." : "Download Inventory (CSV)"}
+          </button>
+        </div>
+
+        {/* Incident Logs Report */}
+        <div className="panel" style={{ background: "white", padding: "28px", borderRadius: "18px", border: "1px solid #d7e6ef", boxShadow: "0 10px 26px rgba(20, 65, 90, 0.08)", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: "0 0 12px 0", color: "#123047", fontSize: "20px" }}>System Incident Logs</h2>
+            <p style={{ color: "#5f7688", fontSize: "14px", lineHeight: "1.5", marginBottom: "20px" }}>
+              Export all reported anomalies, leaks, pressure drops, and system failures logged by field engineers and automated sensors.
+            </p>
+          </div>
+          <button 
+            onClick={downloadIncidentLogs}
+            disabled={loadingType !== null}
+            style={{ width: "100%", padding: "14px", borderRadius: "10px", border: "none", background: loadingType === "incidents" ? "#94a3b8" : "#f59e0b", color: "white", fontWeight: "bold", cursor: loadingType !== null ? "not-allowed" : "pointer", transition: "0.2s" }}
+          >
+            {loadingType === "incidents" ? "Generating CSV..." : "Download Incidents (CSV)"}
+          </button>
+        </div>
+
+        {/* Audit Logs Report */}
+        <div className="panel" style={{ background: "white", padding: "28px", borderRadius: "18px", border: "1px solid #d7e6ef", boxShadow: "0 10px 26px rgba(20, 65, 90, 0.08)", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          <div>
+            <h2 style={{ margin: "0 0 12px 0", color: "#123047", fontSize: "20px" }}>Administrator Audit Logs</h2>
+            <p style={{ color: "#5f7688", fontSize: "14px", lineHeight: "1.5", marginBottom: "20px" }}>
+              Download complete system access and modification logs for security compliance and tracking user activity across the portal.
+            </p>
+          </div>
+          <button 
+            onClick={downloadAuditLogs}
+            disabled={loadingType !== null}
+            style={{ width: "100%", padding: "14px", borderRadius: "10px", border: "none", background: loadingType === "audit" ? "#94a3b8" : "#8b5cf6", color: "white", fontWeight: "bold", cursor: loadingType !== null ? "not-allowed" : "pointer", transition: "0.2s" }}
+          >
+            {loadingType === "audit" ? "Generating CSV..." : "Download Audit Logs (CSV)"}
+          </button>
+        </div>
+
+      </div>
     </div>
   );
 }

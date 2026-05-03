@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { insertAuditLog } from "../utils/databaseService";
+import { login, initAuth } from "../utils/authService";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -8,8 +9,12 @@ const Login = () => {
   const [role, setRole] = useState("engineer");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    initAuth(); // Initialize default users if none exist
+
     const isAuth = localStorage.getItem("waterflow_auth") === "true";
     const savedRole = localStorage.getItem("waterflow_role");
 
@@ -20,64 +25,44 @@ const Login = () => {
     }
   }, [navigate]);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    setError("");
+    setLoading(true);
 
-    const accounts = {
-      engineer: {
-        email: "engineer@waterflow.com",
-        password: "engineer123",
-        roleName: "Engineer",
-        userName: "Field Engineer",
-        redirectPath: "/dashboard",
-      },
-      admin: {
-        email: "admin@waterflow.com",
-        password: "admin123",
-        roleName: "Administrator",
-        userName: "System Admin",
-        redirectPath: "/admin-dashboard",
-      },
-    };
-
-    const selectedAccount = accounts[role];
-
-    if (
-      email.trim().toLowerCase() === selectedAccount.email &&
-      password === selectedAccount.password
-    ) {
-      localStorage.setItem("waterflow_auth", "true");
-      localStorage.setItem("waterflow_role", selectedAccount.roleName);
-      localStorage.setItem("waterflow_user", selectedAccount.userName);
+    try {
+      const user = login(email, password, role);
 
       // Log successful login to audit_logs
       insertAuditLog({
         id: `LOG-${Date.now()}`,
-        user_name: selectedAccount.userName,
-        role: selectedAccount.roleName,
+        user_name: user.name,
+        role: user.role,
         action: "Logged into system",
         module: "Authentication",
         status: "Success",
       }).catch((err) => console.error("Audit log error:", err));
 
-      navigate(selectedAccount.redirectPath, { replace: true });
-    } else {
+      if (user.role === "Administrator") {
+        navigate("/admin-dashboard", { replace: true });
+      } else {
+        navigate("/dashboard", { replace: true });
+      }
+    } catch (err) {
+      setError(err.message);
+
       // Log failed login attempt
       insertAuditLog({
         id: `LOG-${Date.now()}`,
         user_name: email || "Unknown User",
-        role: "Unknown",
-        action: "Failed login attempt",
+        role: role,
+        action: `Failed login attempt: ${err.message}`,
         module: "Authentication",
         status: "Failed",
-      }).catch((err) => console.error("Audit log error:", err));
-
-      alert(`Invalid ${selectedAccount.roleName} email or password`);
+      }).catch((logErr) => console.error("Audit log error:", logErr));
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const handleForgotPassword = () => {
-    alert("Password reset verification sent to your email.");
   };
 
   return (
@@ -238,6 +223,23 @@ const Login = () => {
           </div>
 
           <form onSubmit={handleLogin}>
+            {error && (
+              <div
+                style={{
+                  padding: "12px",
+                  background: "#fee2e2",
+                  color: "#991b1b",
+                  borderRadius: "12px",
+                  fontSize: "13px",
+                  fontWeight: "800",
+                  marginBottom: "16px",
+                  border: "1px solid #f87171",
+                }}
+              >
+                {error}
+              </div>
+            )}
+
             <label style={{ fontSize: "13px", fontWeight: "800" }}>
               Email Address
             </label>
@@ -290,24 +292,23 @@ const Login = () => {
 
             {role === "engineer" && (
               <div style={{ textAlign: "right", marginBottom: "20px" }}>
-                <button
-                  type="button"
-                  onClick={handleForgotPassword}
+                <Link
+                  to="/forgot-password"
                   style={{
-                    border: "none",
-                    background: "transparent",
+                    textDecoration: "none",
                     color: "#0284c7",
                     fontWeight: "800",
-                    cursor: "pointer",
+                    fontSize: "13px",
                   }}
                 >
                   Forgot password?
-                </button>
+                </Link>
               </div>
             )}
 
             <button
               type="submit"
+              disabled={loading}
               style={{
                 width: "100%",
                 padding: "16px",

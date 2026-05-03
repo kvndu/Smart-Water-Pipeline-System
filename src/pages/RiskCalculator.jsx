@@ -320,9 +320,9 @@ export default function RiskCalculator() {
                       key={p.OBJECTID || p.WATMAINID}
                       value={p.WATMAINID || p.OBJECTID}
                     >
-                      {p.WATMAINID || p.OBJECTID} • {p.MATERIAL || "Unknown"} •{" "}
-                      {p.PIPE_SIZE || p.MAP_LABEL || "N/A"} •{" "}
-                      {p.PRESSURE_ZONE || "Zone N/A"}
+                      {p.WATMAINID || p.watmainid || p.OBJECTID || p.objectid} • {p.MATERIAL || p.material || "Unknown"} •{" "}
+                      {p.PIPE_SIZE || p.pipe_size || p.MAP_LABEL || p.map_label || "N/A"} •{" "}
+                      {p.PRESSURE_ZONE || p.pressure_zone || "Zone N/A"}
                     </option>
                   ))}
                 </select>

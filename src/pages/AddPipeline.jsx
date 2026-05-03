@@ -82,12 +82,21 @@ export default function AddPipeline() {
 
     const payload = {
       ...form,
-      OBJECTID: Date.now().toString(),
-      ROADSEGMENTID: "",
-      created_at: new Date().toISOString(),
+      objectid: Date.now().toString(),
+      roadsegmentid: "",
     };
 
-    const { error } = await supabase.from("pipelines").insert([payload]);
+    // Convert keys to lowercase to strictly match Supabase dataset schema
+    const finalPayload = {};
+    for (const key in payload) {
+      if (key === "Condition Score" || key === "Shallow Main") {
+        finalPayload[key.toLowerCase().replace(" ", "_")] = payload[key];
+      } else {
+        finalPayload[key.toLowerCase()] = payload[key];
+      }
+    }
+
+    const { error } = await supabase.from("pipelines").insert([finalPayload]);
 
     setSaving(false);
 
@@ -103,6 +112,9 @@ export default function AddPipeline() {
 
   return (
     <div className="addPipelinePage">
+      <button className="backBtn" onClick={() => navigate(-1)}>
+        ← Back
+      </button>
       <div className="hero">
         <div>
           <div className="eyebrow">Asset Management</div>
