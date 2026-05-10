@@ -2,6 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../utils/supabaseClient";
 import { logout } from "../utils/authService";
+import { 
+  LayoutDashboard, 
+  Database, 
+  PlusCircle, 
+  Calculator, 
+  Map as MapIcon, 
+  AlertTriangle, 
+  Wrench, 
+  BarChart3, 
+  FileText, 
+  Compass, 
+  Zap,
+  CheckCircle2,
+  Activity
+} from "lucide-react";
 
 function toNumber(value) {
   const n = Number(value);
@@ -231,9 +246,12 @@ export default function Dashboard() {
   return (
     <div className="dashboardPage">
       <div className="hero">
-        <div>
-          <div className="eyebrow">Command Overview</div>
-          <h1>Smart Water Pipeline Dashboard</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+          <img src="/logos/system_logo.png" alt="System Logo" style={{ width: "80px", height: "80px", borderRadius: "18px", boxShadow: "0 10px 25px rgba(0,0,0,0.1)" }} />
+          <div>
+            <div className="eyebrow">Command Overview</div>
+            <h1>Smart Water Pipeline Dashboard</h1>
+          </div>
         </div>
 
         <div className="heroBadges" style={{ display: "flex", gap: "16px", alignItems: "flex-end", flexDirection: "column" }}>
@@ -310,7 +328,7 @@ export default function Dashboard() {
         <>
           <div className="quickActions">
             <Link to="/dashboard" className="quickActionCard">
-              <div className="quickIcon">📊</div>
+              <div className="quickIcon"><LayoutDashboard size={22} /></div>
               <div>
                 <h3>Overview Dashboard</h3>
                 <p>System summary and operational overview.</p>
@@ -318,7 +336,7 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/pipelines" className="quickActionCard">
-              <div className="quickIcon">📋</div>
+              <div className="quickIcon"><Database size={22} /></div>
               <div>
                 <h3>Pipeline Records</h3>
                 <p>Search, filter and inspect asset details.</p>
@@ -326,7 +344,7 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/pipelines/add" className="quickActionCard">
-              <div className="quickIcon">➕</div>
+              <div className="quickIcon"><PlusCircle size={22} /></div>
               <div>
                 <h3>Add Pipeline</h3>
                 <p>Add a new water pipeline asset record.</p>
@@ -334,7 +352,7 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/risk-calculator" className="quickActionCard">
-              <div className="quickIcon">🧮</div>
+              <div className="quickIcon"><Calculator size={22} /></div>
               <div>
                 <h3>Risk Calculator</h3>
                 <p>Calculate pipeline risk manually.</p>
@@ -342,7 +360,7 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/map-view" className="quickActionCard">
-              <div className="quickIcon">🗺️</div>
+              <div className="quickIcon"><MapIcon size={22} /></div>
               <div>
                 <h3>GIS Map View</h3>
                 <p>View real pipeline network with risk colors.</p>
@@ -350,7 +368,7 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/alerts" className="quickActionCard">
-              <div className="quickIcon">🚨</div>
+              <div className="quickIcon"><AlertTriangle size={22} /></div>
               <div>
                 <h3>Alerts Center</h3>
                 <p>Review risk alerts and incident workflow.</p>
@@ -358,7 +376,7 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/maintenance" className="quickActionCard">
-              <div className="quickIcon">🛠️</div>
+              <div className="quickIcon"><Wrench size={22} /></div>
               <div>
                 <h3>Maintenance</h3>
                 <p>Schedule and complete repair tasks.</p>
@@ -366,7 +384,7 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/analytics" className="quickActionCard">
-              <div className="quickIcon">📈</div>
+              <div className="quickIcon"><BarChart3 size={22} /></div>
               <div>
                 <h3>Analytics</h3>
                 <p>Deep analysis of condition and assets.</p>
@@ -374,7 +392,7 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/reports" className="quickActionCard">
-              <div className="quickIcon">📄</div>
+              <div className="quickIcon"><FileText size={22} /></div>
               <div>
                 <h3>Reports</h3>
                 <p>Generate pipeline and maintenance reports.</p>
@@ -382,20 +400,28 @@ export default function Dashboard() {
             </Link>
 
             <Link to="/system-hub" className="quickActionCard">
-              <div className="quickIcon">🧭</div>
+              <div className="quickIcon"><Compass size={22} /></div>
               <div>
                 <h3>System Hub</h3>
                 <p>Engineer decision hub and system workflow.</p>
               </div>
             </Link>
+
+            <Link to="/iot-monitoring" className="quickActionCard iotAction">
+              <div className="quickIcon"><Zap size={22} /></div>
+              <div>
+                <h3>IoT Monitoring</h3>
+                <p>Live telemetry and flow rate analysis.</p>
+              </div>
+            </Link>
           </div>
 
           <div className="metricsGrid">
-            <MetricCard label="Total Assets" value={stats.total} hint="Visible pipeline records" />
-            <MetricCard label="High Risk" value={stats.high} hint="Need immediate review" color="#ef4444" />
-            <MetricCard label="Active Alerts" value={stats.activeAlerts} hint="Generated from risk + criticality" color="#dc2626" />
-            <MetricCard label="Critical Queue" value={stats.critical} hint="Priority maintenance assets" color="#f59e0b" />
-            <MetricCard label="System Health" value={`${systemHealth}%`} hint="Low-risk asset percentage" color="#16a34a" />
+            <MetricCard label="Total Assets" value={stats.total} hint="Visible pipeline records" icon={<Database size={18} />} />
+            <MetricCard label="High Risk" value={stats.high} hint="Need immediate review" color="#ef4444" icon={<AlertTriangle size={18} />} />
+            <MetricCard label="Active Alerts" value={stats.activeAlerts} hint="Generated from risk + criticality" color="#dc2626" icon={<Activity size={18} />} />
+            <MetricCard label="Critical Queue" value={stats.critical} hint="Priority maintenance assets" color="#f59e0b" icon={<CheckCircle2 size={18} />} />
+            <MetricCard label="System Health" value={`${systemHealth}%`} hint="Low-risk asset percentage" color="#16a34a" icon={<LayoutDashboard size={18} />} />
           </div>
 
           <div className="mainGrid">
@@ -682,6 +708,16 @@ export default function Dashboard() {
   border-color: #38bdf8 !important;
   background: linear-gradient(135deg, #c8f2ff 0%, #e0f7ff 58%, #ffffff 100%) !important;
   box-shadow: 0 18px 42px rgba(14, 165, 233, 0.2);
+}
+
+.iotAction {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%) !important;
+  border: 1px solid #7dd3fc !important;
+}
+
+.iotAction:hover {
+  background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%) !important;
+  border-color: #0ea5e9 !important;
 }
 
 .quickIcon {
@@ -1015,10 +1051,13 @@ export default function Dashboard() {
   );
 }
 
-function MetricCard({ label, value, hint, color = "#0f172a" }) {
+function MetricCard({ label, value, hint, color = "#0f172a", icon }) {
   return (
     <div className="metricCard">
-      <div className="metricLabel">{label}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div className="metricLabel">{label}</div>
+        <div style={{ color: "#94a3b8" }}>{icon}</div>
+      </div>
       <div className="metricValue" style={{ color }}>
         {value}
       </div>

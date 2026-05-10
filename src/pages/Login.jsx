@@ -144,7 +144,8 @@ const Login = () => {
             boxSizing: "border-box",
           }}
         >
-          <div style={{ marginBottom: "26px" }}>
+          <div style={{ marginBottom: "26px", textAlign: "center" }}>
+            <img src="/logos/system_logo.png" alt="System Logo" style={{ width: "90px", height: "90px", borderRadius: "20px", marginBottom: "20px", boxShadow: "0 10px 30px rgba(0,0,0,0.12)" }} />
             <p
               style={{
                 margin: "0 0 8px",

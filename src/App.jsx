@@ -22,6 +22,7 @@ import SystemHub from "./pages/SystemHub.jsx";
 import RiskCalculator from "./pages/RiskCalculator.jsx";
 import PipelineDetail from "./pages/PipelineDetail.jsx";
 import MapView from "./pages/MapView.jsx";
+import IoTMonitoring from "./pages/IoTMonitoring.jsx";
 
 
 function ProtectedRoute({ children }) {
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="/maintenance" element={<Maintenance />} />
           <Route path="/risk-calculator" element={<RiskCalculator />} />
           <Route path="/map-view" element={<MapView />} />
+          <Route path="/iot-monitoring" element={<IoTMonitoring />} />
           <Route path="/system-hub" element={<SystemHub />} />
           <Route path="/decision-hub" element={<Navigate to="/system-hub" replace />} />
 

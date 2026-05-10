@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { fetchPipelines } from "../utils/pipelineService.js";
+import { 
+  Activity, 
+  Map as MapIcon, 
+  Eye, 
+  ChevronRight, 
+  TrendingUp, 
+  AlertCircle,
+  Clock,
+  Info
+} from "lucide-react";
 
 function getRiskBadgeClass(level) {
   if (level === "High") return "risk-chip high";
@@ -75,9 +85,14 @@ function PipelineDetailsDrawer({ pipeline, onClose, onViewMap }) {
           </button>
         </div>
 
-        <button className="drawer-map-btn" onClick={() => onViewMap(pipeline)}>
-          🗺️ View this pipeline on map
-        </button>
+        <div style={{ display: "flex", gap: "10px", marginBottom: "18px" }}>
+          <button className="drawer-map-btn" onClick={() => onViewMap(pipeline)} style={{ flex: 1 }}>
+            <MapIcon size={16} style={{marginRight: '8px'}}/> View on map
+          </button>
+          <Link to={`/pipelines/${pipeline.pipeline_id}`} className="drawer-full-btn" style={{ flex: 1 }}>
+            <Activity size={16} style={{marginRight: '8px'}}/> Full asset profile
+          </Link>
+        </div>
 
         <div className="details-grid">
           <div className="info-card">
@@ -664,6 +679,26 @@ export default function Pipelines() {
           background: #eaf2ff;
           color: #234e9b;
           font-size: 12px;
+        }
+
+        .drawer-full-btn {
+          height: 40px;
+          border: none;
+          border-radius: 12px;
+          color: white;
+          padding: 0 16px;
+          font-weight: 700;
+          cursor: pointer;
+          background: #6366f1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          text-decoration: none;
+          font-size: 14px;
+        }
+
+        .drawer-full-btn:hover {
+          background: #4f46e5;
         }
 
         .loading-box, .empty-box {

@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { supabase } from "../utils/supabaseClient";
+import PredictiveInsights from "../components/PredictiveInsights";
+import { 
+  History, 
+  Calendar, 
+  ShieldCheck, 
+  Activity,
+  ArrowRight
+} from "lucide-react";
 
 export default function PipelineDetail() {
   const { id } = useParams();
@@ -141,12 +149,124 @@ export default function PipelineDetail() {
             </pre>
           </div>
         </div>
+
+        {/* PREDICTIVE INSIGHTS PANEL */}
+        <div className="panel predictivePanel" style={{ gridColumn: "span 2" }}>
+           <PredictiveInsights pipeline={p} />
+        </div>
+
+        {/* ASSET HEALTH TIMELINE (DIGITAL TWIN CONCEPT) */}
+        <div className="panel timelinePanel" style={{ gridColumn: "span 2" }}>
+           <div className="panelHead">
+             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+               <History size={18} />
+               <h2>Asset Health Timeline</h2>
+             </div>
+             <p>Historical condition trajectory and digital twin representation.</p>
+           </div>
+           
+           <div className="timelineWrap">
+             <div className="timelineItem">
+               <div className="timelineMarker active"></div>
+               <div className="timelineContent">
+                 <div className="timelineDate">2026 - CURRENT</div>
+                 <h4>Predictive Monitoring Active</h4>
+                 <p>System reports {risk} risk profile based on current telemetry.</p>
+               </div>
+             </div>
+             <div className="timelineItem">
+               <div className="timelineMarker"></div>
+               <div className="timelineContent">
+                 <div className="timelineDate">2024 - AUG</div>
+                 <h4>Acoustic Leak Inspection</h4>
+                 <p>Field inspection confirmed 0.2% minor seepage. No excavation required.</p>
+               </div>
+             </div>
+             <div className="timelineItem">
+               <div className="timelineMarker"></div>
+               <div className="timelineContent">
+                 <div className="timelineDate">2022 - JAN</div>
+                 <h4>Pressure Zone Re-calibration</h4>
+                 <p>Inlet pressure adjusted to 4.2 bar to reduce joint stress.</p>
+               </div>
+             </div>
+             <div className="timelineItem">
+               <div className="timelineMarker"></div>
+               <div className="timelineContent">
+                 <div className="timelineDate">1985 - MAY</div>
+                 <h4>Original Installation</h4>
+                 <p>Initial deployment as part of the regional water main expansion.</p>
+               </div>
+             </div>
+           </div>
+        </div>
       </div>
       
       <style>{`
         .panelHead { margin-bottom: 20px; }
         .panelHead h2 { margin: 0; font-size: 18px; color: #0f172a; }
         .panelHead p { margin: 4px 0 0; font-size: 13px; color: #64748b; }
+
+        .timelineWrap {
+          margin-top: 24px;
+          display: grid;
+          gap: 24px;
+          position: relative;
+          padding-left: 30px;
+        }
+
+        .timelineWrap::before {
+          content: "";
+          position: absolute;
+          left: 6px;
+          top: 0;
+          bottom: 0;
+          width: 2px;
+          background: #e2e8f0;
+        }
+
+        .timelineItem {
+          position: relative;
+        }
+
+        .timelineMarker {
+          position: absolute;
+          left: -30px;
+          top: 4px;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: #cbd5e1;
+          border: 3px solid #fff;
+          z-index: 2;
+        }
+
+        .timelineMarker.active {
+          background: #3b82f6;
+          box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+
+        .timelineDate {
+          font-size: 11px;
+          font-weight: 950;
+          color: #94a3b8;
+          letter-spacing: 0.5px;
+          margin-bottom: 4px;
+        }
+
+        .timelineContent h4 {
+          margin: 0;
+          font-size: 15px;
+          color: #1e293b;
+          font-weight: 800;
+        }
+
+        .timelineContent p {
+          margin: 4px 0 0;
+          font-size: 13px;
+          color: #64748b;
+          line-height: 1.5;
+        }
       `}</style>
     </div>
   );

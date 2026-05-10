@@ -1,10 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../utils/supabaseClient";
+import { Link } from "react-router-dom";
 import {
   fetchIncidents,
   insertIncident,
   insertAuditLog,
 } from "../utils/databaseService";
+import { 
+  AlertTriangle, 
+  Bell, 
+  ShieldAlert, 
+  History, 
+  Search, 
+  Filter,
+  CheckCircle2,
+  Zap,
+  Activity
+} from "lucide-react";
 
 const TYPES = ["LEAK", "BURST", "PRESSURE_DROP", "LOW_FLOW"];
 
@@ -247,6 +259,9 @@ export default function Alerts() {
 
       <div className="alertsLayout">
         <section className="panel reportPanel">
+          {/* Real-time IoT Status Alert */}
+          <IoTRealTimeStatus />
+
           <div className="panelHead">
             <h2>Report Incident</h2>
             <p>Create a quick field incident — saved directly to Supabase.</p>
@@ -786,6 +801,101 @@ function Kpi({ title, value, tone = "" }) {
     <div className={`kpi ${tone}`}>
       <div className="kpiTitle">{title}</div>
       <div className="kpiValue">{value}</div>
+    </div>
+  );
+}
+
+function IoTRealTimeStatus() {
+  const [status, setStatus] = useState({ s1: 0, s2: 0, loading: true, error: null });
+  const token = "5IiBCz3InHxX2jlSWvYlsU_uoSPjwpoW";
+
+  useEffect(() => {
+    async function checkIoT() {
+      try {
+        const res = await fetch(`https://blynk.cloud/external/api/get?token=${token}&v0&v1`);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        setStatus({ s1: Number(data.v0 || 0), s2: Number(data.v1 || 0), loading: false, error: null });
+      } catch (err) {
+        setStatus(prev => ({ ...prev, loading: false, error: true }));
+      }
+    }
+    checkIoT();
+    const inv = setInterval(checkIoT, 5000);
+    return () => clearInterval(inv);
+  }, []);
+
+  if (status.loading) return <div className="iotStatusLoading">Checking IoT Sensors...</div>;
+  if (status.error) return null;
+
+  const isLeak = status.s2 < status.s1 && status.s2 < 8 && status.s1 > 2;
+
+  return (
+    <div className={`iotStatusAlert ${isLeak ? 'leak' : 'ok'}`}>
+      <div className="iotStatusIcon">
+        {isLeak ? (
+          <img src="/logos/leak_warning.png" alt="Leak" style={{ width: "40px", height: "40px" }} />
+        ) : (
+          <CheckCircle2 size={32} />
+        )}
+      </div>
+      <div className="iotStatusText">
+        <strong>{isLeak ? "IoT: Leakage Detected!" : "IoT: Flow Rates Normal"}</strong>
+        <p>{isLeak ? `Sensor Discrepancy: ${Math.max(0, status.s1 - status.s2).toFixed(1)} mL/S loss` : "System telemetry reports no active leaks."}</p>
+      </div>
+      <Link to="/iot-monitoring" className="iotStatusLink">View Live Telemetry</Link>
+
+      <style>{`
+        .iotStatusAlert {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 14px;
+          border-radius: 16px;
+          margin-bottom: 20px;
+          border: 1px solid transparent;
+          animation: slideIn 0.3s ease;
+        }
+        .iotStatusAlert.leak {
+          background: #fef2f2;
+          border-color: #fecaca;
+          color: #991b1b;
+        }
+        .iotStatusAlert.ok {
+          background: #f0fdf4;
+          border-color: #bbf7d0;
+          color: #166534;
+        }
+        .iotStatusIcon { font-size: 24px; }
+        .iotStatusText { flex: 1; }
+        .iotStatusText strong { display: block; font-size: 14px; font-weight: 900; }
+        .iotStatusText p { margin: 2px 0 0; font-size: 12px; font-weight: 700; opacity: 0.8; }
+        .iotStatusLink {
+          background: white;
+          color: #123047;
+          text-decoration: none;
+          padding: 6px 12px;
+          border-radius: 8px;
+          font-size: 11px;
+          font-weight: 900;
+          box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .iotStatusLoading {
+          padding: 14px;
+          text-align: center;
+          font-size: 12px;
+          font-weight: 800;
+          color: #64748b;
+          background: #f8fafc;
+          border-radius: 16px;
+          margin-bottom: 20px;
+          border: 1px dashed #e2e8f0;
+        }
+        @keyframes slideIn {
+          from { transform: translateY(-10px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }

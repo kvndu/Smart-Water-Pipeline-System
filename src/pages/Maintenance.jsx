@@ -7,6 +7,19 @@ import {
   upsertMaintenanceStatus,
   insertAuditLog,
 } from "../utils/databaseService";
+import { 
+  Wrench, 
+  Clock, 
+  CheckCircle2, 
+  AlertTriangle, 
+  Cloud, 
+  Camera, 
+  Package, 
+  DollarSign,
+  Activity,
+  Filter,
+  Search
+} from "lucide-react";
 
 const PAGE_SIZE = 1000;
 
@@ -117,6 +130,11 @@ export default function Maintenance() {
   const [repairType, setRepairType] = useState("Leak repaired and section reinforced");
   const [repairCost, setRepairCost] = useState("");
   const [note, setNote] = useState("");
+  
+  // PROFESSIONAL FIELD REPORT STATES
+  const [weather, setWeather] = useState("Clear");
+  const [materials, setMaterials] = useState("");
+  const [photoUploaded, setPhotoUploaded] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -249,6 +267,9 @@ export default function Maintenance() {
       repair_type: repairType,
       cost: Number(repairCost),
       note,
+      weather_at_site: weather,
+      materials_used: materials,
+      photo_verified: photoUploaded,
       completed_by: localStorage.getItem("waterflow_user") || "Engineer",
     };
 
@@ -271,6 +292,9 @@ export default function Maintenance() {
       setActiveTask(null);
       setRepairCost("");
       setNote("");
+      setMaterials("");
+      setWeather("Clear");
+      setPhotoUploaded(false);
     } catch (err) {
       console.error("Failed to complete repair:", err);
       alert("Failed to save repair. Check console.");
@@ -414,21 +438,24 @@ export default function Maintenance() {
                             <option>Crack sealed and reinforced</option>
                           </select>
 
-                          <input
-                            type="number"
-                            value={repairCost}
-                            onChange={(e) => setRepairCost(e.target.value)}
-                            placeholder="Repair cost"
-                          />
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                            <label className="fieldLabel"><Cloud size={14} /> Weather</label>
+                            <label className="fieldLabel"><Package size={14} /> Materials</label>
+                            <select value={weather} onChange={(e) => setWeather(e.target.value)}>
+                              <option>Clear</option>
+                              <option>Rainy</option>
+                              <option>Humid</option>
+                              <option>Stormy</option>
+                            </select>
+                            <input value={materials} onChange={(e) => setMaterials(e.target.value)} placeholder="e.g. 10m PVC, Gaskets" />
+                          </div>
 
-                          <input
-                            value={note}
-                            onChange={(e) => setNote(e.target.value)}
-                            placeholder="Maintenance note"
-                          />
+                          <div className="photoUploadSim" onClick={() => setPhotoUploaded(true)}>
+                            {photoUploaded ? <><CheckCircle2 size={16} /> Photo Captured</> : <><Camera size={16} /> Upload Site Photo</>}
+                          </div>
 
                           <div className="btnRow">
-                            <button onClick={() => completeRepair(p)}>Save Repair</button>
+                            <button onClick={() => completeRepair(p)}><CheckCircle2 size={16} style={{marginRight: '6px'}}/> Save Professional Report</button>
                             <button className="ghost" onClick={() => setActiveTask(null)}>
                               Cancel
                             </button>
@@ -717,12 +744,45 @@ export default function Maintenance() {
 
         .repairBox {
           display: grid;
-          gap: 8px;
+          gap: 12px;
           background: #f8fafc;
           border: 1px solid #e2e8f0;
-          border-radius: 14px;
-          padding: 10px;
-          min-width: 250px;
+          border-radius: 18px;
+          padding: 16px;
+          min-width: 320px;
+          box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+        }
+
+        .fieldLabel {
+          font-size: 11px;
+          color: #64748b;
+          font-weight: 800;
+          text-transform: uppercase;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        .photoUploadSim {
+          border: 2px dashed #cbd5e1;
+          border-radius: 12px;
+          padding: 16px;
+          text-align: center;
+          color: #64748b;
+          font-weight: 800;
+          cursor: pointer;
+          transition: 0.2s ease;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          background: #fff;
+        }
+
+        .photoUploadSim:hover {
+          border-color: #2563eb;
+          color: #2563eb;
+          background: #eff6ff;
         }
 
         .logsGrid {

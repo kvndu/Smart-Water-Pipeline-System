@@ -22,24 +22,14 @@ export default function SystemHub() {
     async function loadData() {
       try {
         setLoading(true);
-        let allRows = [];
-        let from = 0;
-        const count = 1000;
-        let hasMore = true;
+        // Fetch a representative sample (2,000 records) for analytics
+        const { data, error } = await supabase
+          .from("pipelines")
+          .select("*")
+          .range(0, 1999);
 
-        while (hasMore) {
-          const { data, error } = await supabase
-            .from("pipelines")
-            .select("*")
-            .range(from, from + count - 1);
-
-          if (error) throw error;
-          if (data) allRows = [...allRows, ...data];
-          if (!data || data.length < count) hasMore = false;
-          from += count;
-        }
-
-        setPipelines(allRows);
+        if (error) throw error;
+        setPipelines(data || []);
       } catch (err) {
         console.error(err);
       } finally {
