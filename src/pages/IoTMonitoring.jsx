@@ -22,7 +22,7 @@ import {
   Wifi,
   Cpu,
   RefreshCw,
-  Trello,
+  LayoutGrid,
   Maximize2
 } from "lucide-react";
 
@@ -187,7 +187,7 @@ export default function IoTMonitoring() {
         <div className="iotPanel schematicPanel">
           <div className="panelHead">
             <h2>Digital Twin Representation</h2>
-            <Trello size={16} color="#94a3b8" />
+            <LayoutGrid size={16} color="#94a3b8" />
           </div>
           <div className="schematicContainer">
              <div className="pipeLine">
