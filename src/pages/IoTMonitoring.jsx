@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
+import { supabase } from "../utils/supabaseClient";
 import { 
   LineChart, 
   Line, 
@@ -26,7 +27,6 @@ import {
   Maximize2
 } from "lucide-react";
 
-const BLYNK_AUTH_TOKEN = "5IiBCz3InHxX2jlSWvYlsU_uoSPjwpoW";
 const UPDATE_INTERVAL = 3000; // 3 seconds
 
 export default function IoTMonitoring() {
@@ -36,7 +36,6 @@ export default function IoTMonitoring() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(new Date());
-  const [simulationMode, setSimulationMode] = useState(false);
 
   const isLeak = useMemo(() => {
     // Logic: flowRate2 < flowRate1 && flowRate2 < 8
@@ -46,16 +45,25 @@ export default function IoTMonitoring() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const res = await fetch(`https://blynk.cloud/external/api/get?token=${BLYNK_AUTH_TOKEN}&v0&v1`);
-        if (!res.ok) throw new Error("Blynk API connection failed");
-        const data = await res.json();
+        const { data, error: fetchError } = await supabase
+          .from("sensor_readings")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        if (fetchError) throw fetchError;
         
-        const v0 = Number(data.v0 || 0);
-        const v1 = Number(data.v1 || 0);
+        if (!data || data.length === 0) {
+          setLoading(false);
+          return;
+        }
+
+        const v0 = Number(data[0].flow_rate_inlet || 0);
+        const v1 = Number(data[0].flow_rate_outlet || 0);
 
         setSensor1(v0);
         setSensor2(v1);
-        setLastUpdate(new Date());
+        setLastUpdate(new Date(data[0].created_at));
         
         setHistory(prev => {
           const newPoint = {
@@ -72,34 +80,14 @@ export default function IoTMonitoring() {
         setError(null);
       } catch (err) {
         console.error("IoT Fetch Error:", err);
-        setError("Failed to connect to Blynk Cloud. Ensure your ESP32 is online.");
+        setError("Failed to retrieve live sensor data. Please check your database connection.");
       }
-    }
-
-    if (simulationMode) {
-      const simInterval = setInterval(() => {
-        const v0 = 15 + Math.random() * 2;
-        const v1 = 5 + Math.random() * 2; // Simulate a leak (v1 < v0 and v1 < 8)
-        setSensor1(v0);
-        setSensor2(v1);
-        setLastUpdate(new Date());
-        setHistory(prev => {
-          const newPoint = {
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            flow1: v0,
-            flow2: v1,
-          };
-          const updated = [...prev, newPoint];
-          return updated.length > 20 ? updated.slice(1) : updated;
-        });
-      }, 2000);
-      return () => clearInterval(simInterval);
     }
 
     fetchData();
     const interval = setInterval(fetchData, UPDATE_INTERVAL);
     return () => clearInterval(interval);
-  }, [simulationMode]);
+  }, []);
 
   return (
     <div className="iotPage">
@@ -111,39 +99,15 @@ export default function IoTMonitoring() {
           </div>
           <div>
             <div className="iotEyebrow">
-              <span className="liveBadge">LIVE TELEMETRY</span>
-              Pipeline Command Center
+              <span className="liveBadge">LIVE DATA</span>
+              Pipeline Monitor
             </div>
-            <h1>Smart IoT Flow Infrastructure</h1>
+            <h1>Water Flow Monitoring System</h1>
             <p className="iotSubtitle">
-              End-to-end monitoring from ESP32 Edge Node 01
+              Monitoring active water flow rates from ESP32 edge device
               <span className={`statusDot ${loading ? 'syncing' : 'online'}`}></span>
-              {loading ? "Establishing Connection..." : "System Nominal"}
+              {loading ? "Establishing Connection..." : "Connected"}
             </p>
-          </div>
-        </div>
-
-        <div className="iotStatSummary">
-          <div className="iStatItem">
-            <Wifi size={16} />
-            <div>
-              <span>Network</span>
-              <strong>-64 dBm</strong>
-            </div>
-          </div>
-          <div className="iStatItem">
-            <Cpu size={16} />
-            <div>
-              <span>MCU Load</span>
-              <strong>12.4%</strong>
-            </div>
-          </div>
-          <div className="iStatItem">
-            <RefreshCw size={16} />
-            <div>
-              <span>Latency</span>
-              <strong>42ms</strong>
-            </div>
           </div>
         </div>
       </div>
@@ -186,7 +150,7 @@ export default function IoTMonitoring() {
         {/* MIDDLE COLUMN: DIGITAL TWIN SCHEMATIC */}
         <div className="iotPanel schematicPanel">
           <div className="panelHead">
-            <h2>Digital Twin Representation</h2>
+            <h2>Flow Schematic</h2>
             <LayoutGrid size={16} color="#94a3b8" />
           </div>
           <div className="schematicContainer">
@@ -237,7 +201,7 @@ export default function IoTMonitoring() {
       <div className="iotBottomGrid">
         <div className={`iotPanel integrityPanel ${isLeak ? 'detected' : ''}`}>
           <div className="panelHead">
-            <h2>System Integrity Analysis</h2>
+            <h2>Leak Detection Status</h2>
             <ShieldCheck size={18} />
           </div>
           <div className="integrityContent">
@@ -248,14 +212,13 @@ export default function IoTMonitoring() {
                      <img src="/logos/leak_warning.png" alt="Leak Warning" />
                   </div>
                   <div>
-                    <h3>CRITICAL LEAK DETECTED</h3>
+                    <h3>Leakage Detected</h3>
                     <p>Flow differential exceeds safe threshold ({(sensor1 - sensor2).toFixed(1)} mL/S loss).</p>
                     <div className="leakTags">
-                       <span className="tag danger">PRESSURE DROP</span>
-                       <span className="tag warning">AUTO-ISOLATION READY</span>
+                       <span className="tag danger">Warning</span>
                     </div>
                   </div>
-                  <Link to="/alerts" className="leakActionBtn">DEPLOY EMERGENCY UNIT</Link>
+                  <Link to="/alerts" className="leakActionBtn">View Alerts</Link>
                 </div>
               </div>
             ) : (
@@ -263,15 +226,15 @@ export default function IoTMonitoring() {
                 <div style={{ display: "flex", gap: "20px", alignItems: "center", textAlign: "left" }}>
                    <div className="safeIcon"><ShieldCheck size={48} color="#10b981" /></div>
                    <div style={{ flex: 1 }}>
-                      <h3>STRUCTURAL INTEGRITY: 100%</h3>
+                      <h3>No Leaks Detected</h3>
                       <p>Active monitoring confirms zero leakage across monitored segments.</p>
                       <div className="safeProgress">
                          <div className="safeBar" style={{ width: '100%' }}></div>
                       </div>
                    </div>
                    <div className="integrityScore">
-                      <span>STABILITY</span>
-                      <strong>NOMINAL</strong>
+                       <span>STATUS</span>
+                       <strong>Normal</strong>
                    </div>
                 </div>
               </div>
@@ -287,12 +250,6 @@ export default function IoTMonitoring() {
             <h2>Live Flow Velocity Trend</h2>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
-          <button 
-            className={`simToggle ${simulationMode ? 'active' : ''}`}
-            onClick={() => setSimulationMode(!simulationMode)}
-          >
-            {simulationMode ? "Stop Simulation" : "Start Test Simulation"}
-          </button>
           <div className="iotTimeBox">
             <div className="timeLabel"><Clock size={12} style={{ marginRight: '6px' }} /> Last Synchronized</div>
             <div className="timeValue">{lastUpdate.toLocaleTimeString()}</div>
